@@ -13,7 +13,7 @@ import logging
 import traceback
 from datetime import datetime
 
-from flask import jsonify, request
+from flask import jsonify, make_response, request
 
 
 logger = logging.getLogger("server_agent")
@@ -108,7 +108,11 @@ def register_web_api_routes(app, get_server_agent):
         server_agent = get_server_agent()
         if server_agent is None:
             return '<h1>服务器未初始化</h1>', 503
-        return server_agent._get_web_ui_html()
+        response = make_response(server_agent._get_web_ui_html())
+        response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+        return response
 
     @app.route('/api/health', methods=['GET'])
     def health_check():

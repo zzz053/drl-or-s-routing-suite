@@ -22,6 +22,15 @@ def test_web_api_serves_cached_graph_versions():
     assert "server_agent.G.nodes(data=True)" not in text
 
 
+def test_web_ui_page_disables_browser_cache():
+    text = (ROOT / "web_api.py").read_text(encoding="utf-8")
+    index_body = text[text.index("def index"):text.index("@app.route('/api/health'")]
+
+    assert "make_response" in text
+    assert "Cache-Control" in index_body
+    assert "no-store" in index_body
+
+
 def test_frontend_uses_incremental_graph_updates_and_layout_guard():
     text = (ROOT / "web_ui_html.py").read_text(encoding="utf-8")
 
