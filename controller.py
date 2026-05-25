@@ -23,6 +23,9 @@ from common_config import (
     HOST_PORT_TASK_RANGES,
     TASK_POLICY_MAP,
     TASK_PRIORITY_MAP,
+    ROUTE_FLOW_IDLE_TIMEOUT,
+    ROUTE_FLOW_HARD_TIMEOUT,
+    FLOW_INSTALL_BARRIER_TIMEOUT,
 )
 from host_model import Host
 from controller_helpers import (
@@ -128,6 +131,7 @@ class TopoAwareness(app_manager.RyuApp):
         self._next_route_session_id = 1
         self._route_session_sid_hints = {}  # {session_key: sid}，用于重路由后复用会话ID
         self._active_flow_tracking = None
+        self._barrier_events = {}
         
         # 启动server连接线程
         self.connect_thread = hub.spawn(self._connect_to_server)
@@ -216,6 +220,29 @@ class TopoAwareness(app_manager.RyuApp):
             int(flow_record.get('priority', 0)) == int(priority) and
             flow_record.get('match', {}) == (match_dict or {})
         )
+
+    def _wait_for_flow_barriers(self, datapaths, timeout=FLOW_INSTALL_BARRIER_TIMEOUT):
+        ok = True
+        for datapath in datapaths:
+            req = None
+            try:
+                req = datapath.ofproto_parser.OFPBarrierRequest(datapath)
+                datapath.set_xid(req)
+                waiter = hub.Event()
+                self._barrier_events[(datapath.id, req.xid)] = waiter
+                datapath.send_msg(req)
+                if waiter.wait(timeout=timeout) is not True:
+                    ok = False
+                    self.logger.warning("[Path] flow barrier timeout: dpid=%s xid=%s",
+                                        datapath.id, req.xid)
+            except Exception as exc:
+                ok = False
+                self.logger.warning("[Path] flow barrier wait failed: dpid=%s error=%s",
+                                    getattr(datapath, 'id', None), exc)
+            finally:
+                if req is not None:
+                    self._barrier_events.pop((getattr(datapath, 'id', None), getattr(req, 'xid', None)), None)
+        return ok
 
     def _begin_flow_tracking(self):
         self._active_flow_tracking = []
@@ -499,9 +526,19 @@ class TopoAwareness(app_manager.RyuApp):
                 'bytes': int(getattr(stat, 'byte_count', 0)),
                 'duration_sec': int(getattr(stat, 'duration_sec', 0)),
                 'duration_nsec': int(getattr(stat, 'duration_nsec', 0)),
+                'idle_timeout': int(getattr(stat, 'idle_timeout', 0)),
+                'hard_timeout': int(getattr(stat, 'hard_timeout', 0)),
                 'real': True,
             })
         self.switch_flow_stats[dpid] = flow_entries
+
+    @set_ev_cls(ofp_event.EventOFPBarrierReply, MAIN_DISPATCHER)
+    def _barrier_reply_handler(self, ev):
+        msg = ev.msg
+        key = (msg.datapath.id, msg.xid)
+        waiter = self._barrier_events.pop(key, None)
+        if waiter is not None:
+            waiter.send(True)
 
     @set_ev_cls(ofp_event.EventOFPFlowRemoved, MAIN_DISPATCHER)
     def _flow_removed_handler(self, ev):
@@ -1142,7 +1179,7 @@ class TopoAwareness(app_manager.RyuApp):
         """是否开启抓包模式（强制 ARP/IP 每包 PacketIn）。"""
         return bool(self.packet_capture_mode_enable)
 
-    def add_flow(self, datapath, priority, match, actions, proto=0, hard_timeout=0, idle_timeout=0, buffer_id=None):
+    def add_flow(self, datapath, priority, match, actions, proto=0, hard_timeout=None, idle_timeout=None, buffer_id=None):
         """
         向交换机下发流表
         Deliver the flow table to the switch
@@ -1155,7 +1192,15 @@ class TopoAwareness(app_manager.RyuApp):
         # if proto == 6:
         #     hard_timeout = 5
 
-        flow_mod_flags = ofproto.OFPFF_SEND_FLOW_REM if int(priority) > 0 else 0
+        priority_int = int(priority)
+        if idle_timeout is None:
+            idle_timeout = ROUTE_FLOW_IDLE_TIMEOUT if priority_int > 0 else 0
+        if hard_timeout is None:
+            hard_timeout = ROUTE_FLOW_HARD_TIMEOUT if priority_int > 0 else 0
+        idle_timeout = int(idle_timeout)
+        hard_timeout = int(hard_timeout)
+
+        flow_mod_flags = ofproto.OFPFF_SEND_FLOW_REM if priority_int > 0 else 0
 
         if buffer_id:
             mod = parser.OFPFlowMod(datapath=datapath, buffer_id=buffer_id,
@@ -1173,8 +1218,10 @@ class TopoAwareness(app_manager.RyuApp):
         if self._active_flow_tracking is not None:
             self._active_flow_tracking.append({
                 'dpid': datapath.id,
-                'priority': int(priority),
+                'priority': priority_int,
                 'match': self._serialize_match_for_delete(match),
+                'idle_timeout': int(idle_timeout),
+                'hard_timeout': int(hard_timeout),
             })
     #将数据包发送到指定的输出端口。
     def send_packet_to_outport(self, datapath, msg, in_port, actions):
@@ -2219,6 +2266,7 @@ class TopoAwareness(app_manager.RyuApp):
         l4_rev = l4_reverse_for_match(l4_fwd)
         local_switches_in_path = 0
         skipped_switches = 0
+        barrier_datapaths = {}
         first_hop_datapath = None
         first_hop_in_port = None
         first_hop_actions = None
@@ -2262,6 +2310,7 @@ class TopoAwareness(app_manager.RyuApp):
                     ]
                     match_reverse = self._ofp_match_ip_l4(p, out_port, dst_ip, src_ip, l4_rev)
                     self.add_flow(datapath, flow_priority, match_reverse, actions_reverse)
+                    barrier_datapaths[dpid] = datapath
                 else:
                     # 中间节点，出端口是到下一个交换机的端口
                     next_dpid = path[i + 1]
@@ -2297,16 +2346,17 @@ class TopoAwareness(app_manager.RyuApp):
                         ]
                     match_reverse = self._ofp_match_ip_l4(p, out_port, dst_ip, src_ip, l4_rev)
                     self.add_flow(datapath, flow_priority, match_reverse, actions_reverse)
+                    barrier_datapaths[dpid] = datapath
                 # 发送当前数据包
                 if i == 1 and first_hop_datapath is None:
                     first_hop_datapath = datapath
                     first_hop_in_port = in_port
                     first_hop_actions = actions
-                if msg and i == 1:
-                    self.send_packet_to_outport(datapath, msg, in_port, actions)
                 self.logger.info("【跨域流表安装】交换机=%s, in_port=%s, out_port=%s, src_ip=%s, dst_ip=%s, actions=%s",
                                 dpid, in_port, out_port, src_ip, dst_ip, actions)
                 # break  # 只处理本控制器的交换机
+
+        barriers_ok = self._wait_for_flow_barriers(list(barrier_datapaths.values())) if barrier_datapaths else True
 
         if path_id:
             self._send_to_server({
@@ -2316,14 +2366,17 @@ class TopoAwareness(app_manager.RyuApp):
                 "dst": dst_ip,
                 "installed": local_switches_in_path - skipped_switches,
                 "skipped": skipped_switches,
-                "barriers_ok": True,
+                "barriers_ok": barriers_ok,
             })
+
+        if msg and first_hop_datapath is not None and first_hop_actions is not None and barriers_ok:
+            self.send_packet_to_outport(first_hop_datapath, msg, first_hop_in_port, first_hop_actions)
 
         pending_key = (src_ip, dst_ip)
         self._path_requested.pop(pending_key, None)
         if pending_key in self._pending_path_packets:
             queue = self._pending_path_packets.pop(pending_key)
-            if first_hop_datapath is not None and first_hop_actions is not None:
+            if first_hop_datapath is not None and first_hop_actions is not None and barriers_ok:
                 for _dp, queued_msg, _queued_in_port in queue:
                     try:
                         self.send_packet_to_outport(
@@ -2332,7 +2385,7 @@ class TopoAwareness(app_manager.RyuApp):
                         self.logger.error("[Path] forward queued packet failed: %s", exc)
                 self.logger.info("[Path] forwarded %d queued packets for %s", len(queue), pending_key)
             else:
-                self.logger.info("[Path] cleared %d queued packets for %s without local first hop",
+                self.logger.info("[Path] cleared %d queued packets for %s without local first hop or barrier",
                                  len(queue), pending_key)
 
     def _request_path(self, src_ip, dst_ip, dpid, in_port, msg, task_type='default',

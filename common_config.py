@@ -39,6 +39,13 @@ DRL_K_CANDIDATES = int(os.environ.get("DRL_K_CANDIDATES", "5"))
 DRL_INFERENCE_TIMEOUT_MS = int(os.environ.get("DRL_INFERENCE_TIMEOUT_MS", "100"))
 DRL_MIN_CONFIDENCE = float(os.environ.get("DRL_MIN_CONFIDENCE", "0.50"))
 
+# Controller-installed route flows expire after traffic stops, so flow_removed can
+# clear controller/server/Web state. Manual Web flows still honor their explicit
+# idle_timeout/hard_timeout values.
+ROUTE_FLOW_IDLE_TIMEOUT = int(os.environ.get("ROUTE_FLOW_IDLE_TIMEOUT", "15"))
+ROUTE_FLOW_HARD_TIMEOUT = int(os.environ.get("ROUTE_FLOW_HARD_TIMEOUT", "0"))
+FLOW_INSTALL_BARRIER_TIMEOUT = float(os.environ.get("FLOW_INSTALL_BARRIER_TIMEOUT", "0.5"))
+
 # 按主机 TCP/UDP 端口区间划分业务（闭区间）。
 # 顺序有意义：对每个包先按目的端口查表，再按源端口；未命中则使用 default。
 # 示例：1–5000 为业务 task_0，5001–10000 为 task_1，其余为 task_2（可按需增删改）。
