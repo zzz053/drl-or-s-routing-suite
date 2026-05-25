@@ -2226,7 +2226,7 @@ def get_web_ui_html():
                             return;
                         }
                         
-                        const edgeType = edgeData?.edge_type || 'unknown';
+                        const edgeType = (edgeData && edgeData.edge_type) || 'unknown';
                         
                         let color, width, dashes, smooth;
                         let isInterDomain = false;
@@ -2401,8 +2401,8 @@ def get_web_ui_html():
                          ((fromNode.nodeType === 'switch' && toNode.nodeType === 'host') ||
                           (fromNode.nodeType === 'host' && toNode.nodeType === 'switch')))) {
                         
-                        const switchId = (fromNode?.nodeType === 'switch') ? edge.from : edge.to;
-                        const hostId = (fromNode?.nodeType === 'host') ? edge.from : edge.to;
+                        const switchId = (fromNode && fromNode.nodeType === 'switch') ? edge.from : edge.to;
+                        const hostId = (fromNode && fromNode.nodeType === 'host') ? edge.from : edge.to;
                         
                         if (switchId && hostId) {
                             if (!switchGroups[switchId]) {

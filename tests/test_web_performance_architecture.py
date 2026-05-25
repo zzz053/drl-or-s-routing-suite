@@ -51,3 +51,7 @@ def test_server_agent_topology_update_does_not_dump_full_graph():
     assert "print(f\"**********G" not in body
     assert "logger.info(f\"添加边" not in body
     assert "logger.info(f\"添加主机连接" not in body
+def test_web_ui_avoids_optional_chaining_for_server_side_syntax_checks():
+    text = (ROOT / "web_ui_html.py").read_text(encoding="utf-8")
+
+    assert "?." not in text
