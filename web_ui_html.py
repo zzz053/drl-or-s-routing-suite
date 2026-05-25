@@ -840,6 +840,7 @@ def get_web_ui_html():
         let graphNodeDataById = new Map();
         let graphEdgeDataById = new Map();
         let hoveredEdgeId = null;
+        let hasAutoFitInitialTopology = false;
         const WEB_DEBUG = false;
         const compactModeStorageKey = 'hydrateCompactModeEnabled';
         const compactPositionStorageKey = 'hydrateCompactSwitchPositions';
@@ -961,14 +962,30 @@ def get_web_ui_html():
             if (toAdd.length) dataSet.add(toAdd);
         }
 
-        function stableEdgeId(edgeType, source, target, index) {
+        function stableEdgeId(edgeType, source, target) {
+            const type = edgeType || 'unknown';
+            const pair = type === 'switch_link'
+                ? canonicalSwitchLinkKey(source, target)
+                : (String(source) + '||' + String(target));
             return [
                 'edge',
-                edgeType || 'unknown',
-                String(source),
-                String(target),
-                String(index)
+                type,
+                pair
             ].join('|');
+        }
+
+        function fitInitialTopologyOnce() {
+            if (hasAutoFitInitialTopology || !network) return;
+            hasAutoFitInitialTopology = true;
+            setTimeout(() => {
+                if (!network) return;
+                network.fit({
+                    animation: {
+                        duration: 500,
+                        easingFunction: 'easeInOutQuad'
+                    }
+                });
+            }, 100);
         }
 
         function refreshGraphMetadataCache(data) {
@@ -986,7 +1003,7 @@ def get_web_ui_html():
                 nextNodeData.set(String(nodeId), Object.assign({}, nodeObj.data || {}));
             });
 
-            (renderData.edges || []).forEach((edgeObj, index) => {
+            (renderData.edges || []).forEach((edgeObj) => {
                 const source = edgeObj.source;
                 const target = edgeObj.target;
                 const edgeData = Object.assign({}, edgeObj.data || {});
@@ -997,7 +1014,7 @@ def get_web_ui_html():
                 edgeData.inter_domain = sourceDomain !== targetDomain;
                 edgeData.source_domain = sourceDomain;
                 edgeData.target_domain = targetDomain;
-                const edgeId = stableEdgeId(edgeType, source, target, index);
+                const edgeId = stableEdgeId(edgeType, source, target);
                 nextEdgeData.set(edgeId, edgeData);
                 if (edgeType === 'switch_link') {
                     const linkKey = canonicalSwitchLinkKey(source, target);
@@ -1180,6 +1197,7 @@ def get_web_ui_html():
         }
 
         function selectRouteSessionById(sessionId) {
+            hasAutoFitInitialTopology = true;
             selectedRouteSessionId = sessionId;
             const active = getActiveRouteSession();
             selectedRouteSessionSignature = active ? getRouteSessionSignature(active) : null;
@@ -2314,7 +2332,7 @@ def get_web_ui_html():
                 // 添加边
                 let addedEdges = 0;
                 const newSwitchLinkKeys = new Set();
-                renderEdges.forEach((edgeObj, index) => {
+                renderEdges.forEach((edgeObj) => {
                     try {
                         // 适配新的数据格式：{source: ..., target: ..., data: {...}}
                         let source, target, edgeData;
@@ -2374,7 +2392,7 @@ def get_web_ui_html():
                             smooth = { type: 'curvedCW', roundness: 0.2 };
                         }
                         
-                        debugLog(`添加边 ${index}: ${source} -> ${target} (${edgeType})`);
+                        debugLog(`添加边 ${source} -> ${target} (${edgeType})`);
                         
                         const safeEdgeData = Object.assign({}, edgeData || {});
                         safeEdgeData.edge_type = edgeType;
@@ -2382,7 +2400,7 @@ def get_web_ui_html():
                         if (sourceDomain) safeEdgeData.source_domain = sourceDomain;
                         if (targetDomain) safeEdgeData.target_domain = targetDomain;
 
-                        const edgeId = stableEdgeId(edgeType, source, target, index);
+                        const edgeId = stableEdgeId(edgeType, source, target);
                         if (edgeType === 'switch_link') {
                             const linkKey = canonicalSwitchLinkKey(source, target);
                             if (!nextSwitchLinkEdgeIdsByKey.has(linkKey)) {
@@ -2426,16 +2444,7 @@ def get_web_ui_html():
                     applyCompactLayout(renderNodes, currentSwitchDomainMap, renderEdges);
                     lastLayoutSignature = topologySignature;
 
-                    if (network) {
-                        setTimeout(() => {
-                            network.fit({
-                                animation: {
-                                    duration: 500,
-                                    easingFunction: 'easeInOutQuad'
-                                }
-                            });
-                        }, 100);
-                    }
+                    fitInitialTopologyOnce();
                 }
                 lastTopologySignature = topologySignature;
                 

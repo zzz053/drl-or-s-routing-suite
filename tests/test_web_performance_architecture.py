@@ -103,3 +103,22 @@ def test_route_session_highlight_uses_current_graph_id_maps():
     assert "function getVisNodeId" in text
     assert "switchLinkEdgeIdsByKey = nextSwitchLinkEdgeIdsByKey" in metadata_body
     assert "getVisNodeId(nodeId)" in highlight_body
+
+
+def test_route_session_highlight_uses_stable_edge_ids():
+    text = (ROOT / "web_ui_html.py").read_text(encoding="utf-8")
+    stable_edge_id_body = text[text.index("function stableEdgeId"):text.index("function refreshGraphMetadataCache")]
+
+    assert "String(index)" not in stable_edge_id_body
+    assert "stableEdgeId(edgeType, source, target)" in text
+    assert "stableEdgeId(edgeType, source, target, index)" not in text
+
+
+def test_topology_refresh_does_not_repeat_auto_fit():
+    text = (ROOT / "web_ui_html.py").read_text(encoding="utf-8")
+    update_body = text[text.index("function updateNetwork"):text.index("function applyCustomLayout")]
+
+    assert "let hasAutoFitInitialTopology = false" in text
+    assert "function fitInitialTopologyOnce" in text
+    assert "network.fit({" not in update_body
+    assert "fitInitialTopologyOnce()" in update_body
