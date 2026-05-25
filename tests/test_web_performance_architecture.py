@@ -55,3 +55,10 @@ def test_web_ui_avoids_optional_chaining_for_server_side_syntax_checks():
     text = (ROOT / "web_ui_html.py").read_text(encoding="utf-8")
 
     assert "?." not in text
+
+
+def test_server_agent_topology_message_details_are_debug_only():
+    text = (ROOT / "server_agent.py").read_text(encoding="utf-8")
+
+    assert 'logger.info(f"链路详情:' not in text
+    assert 'logger.info(f"主机详情:' not in text

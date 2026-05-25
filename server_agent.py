@@ -456,7 +456,7 @@ class ServerAgent:
             
             # 打印链路详情
             for link in message['link']:
-                logger.info(f"链路详情: {link}")
+                logger.debug(f"链路详情: {link}")
                 # print(f"链路详情: {link}")
         
         # 保存主机信息
@@ -467,7 +467,7 @@ class ServerAgent:
             
             # 打印主机详情
             for host in message['host']:
-                logger.info(f"主机详情: {host}")
+                logger.debug(f"主机详情: {host}")
                 # print(f"主机详情: {host}")
 
         # 保存控制器上报的路径会话（用于精简模式路由路径展示）
