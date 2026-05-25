@@ -62,3 +62,33 @@ def test_server_agent_topology_message_details_are_debug_only():
 
     assert 'logger.info(f"链路详情:' not in text
     assert 'logger.info(f"主机详情:' not in text
+def test_frontend_graph_refresh_ignores_metric_only_changes():
+    text = (ROOT / "web_ui_html.py").read_text(encoding="utf-8")
+    signature_body = text[text.index("function computeGraphSignature"):text.index("function computeTopologySignature")]
+    refresh_body = text[text.index("async function refreshTopology"):text.index("function updateNetwork")]
+
+    assert "nodeData.flow_count" not in signature_body
+    assert "edgeData.delay" not in signature_body
+    assert "edgeData.loss" not in signature_body
+    assert "edgeData.bw" not in signature_body
+    assert "refreshGraphMetadataCache(data)" in refresh_body
+    assert "graphSignature !== lastGraphSignature" not in refresh_body
+    assert "topologySignature !== lastTopologySignature" in refresh_body
+
+
+def test_frontend_keeps_metric_updates_out_of_vis_dataset():
+    text = (ROOT / "web_ui_html.py").read_text(encoding="utf-8")
+
+    assert "let graphNodeDataById = new Map()" in text
+    assert "let graphEdgeDataById = new Map()" in text
+    assert "function refreshGraphMetadataCache" in text
+    assert "function getEdgeMetadata" in text
+    assert "const edgeData = getEdgeMetadata(edgeId, edge)" in text
+
+
+def test_frontend_has_direct_hover_edge_handlers():
+    text = (ROOT / "web_ui_html.py").read_text(encoding="utf-8")
+
+    assert "network.on('hoverEdge'" in text
+    assert "network.on('blurEdge'" in text
+    assert "function setHoveredEdge" in text

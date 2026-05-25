@@ -836,6 +836,9 @@ def get_web_ui_html():
         let lastHighlightedNodeIds = new Set();
         let lastHighlightedEdgeIds = new Set();
         let switchLinkEdgeIdsByKey = new Map();
+        let graphNodeDataById = new Map();
+        let graphEdgeDataById = new Map();
+        let hoveredEdgeId = null;
         const WEB_DEBUG = false;
         const compactModeStorageKey = 'hydrateCompactModeEnabled';
         const compactPositionStorageKey = 'hydrateCompactSwitchPositions';
@@ -898,8 +901,7 @@ def get_web_ui_html():
                 return [
                     String(item.id),
                     nodeData.node_type || '',
-                    nodeData.gateway_ip || '',
-                    nodeData.flow_count || 0
+                    nodeData.gateway_ip || ''
                 ].join(':');
             }).sort();
             const edgeParts = (data.edges || []).map((item) => {
@@ -908,10 +910,7 @@ def get_web_ui_html():
                     String(item.source),
                     String(item.target),
                     edgeData.edge_type || '',
-                    edgeData.status || '',
-                    edgeData.delay || '',
-                    edgeData.loss || '',
-                    edgeData.bw || ''
+                    edgeData.status || ''
                 ].join(':');
             }).sort();
             return JSON.stringify({ nodes: nodeParts, edges: edgeParts });
@@ -969,6 +968,51 @@ def get_web_ui_html():
                 String(target),
                 String(index)
             ].join('|');
+        }
+
+        function refreshGraphMetadataCache(data) {
+            const graphNodes = data.nodes || [];
+            const graphEdges = data.edges || [];
+            const renderData = buildCompactGraphData(graphNodes, graphEdges);
+            const nextNodeData = new Map();
+            const nextEdgeData = new Map();
+
+            (renderData.nodes || []).forEach((nodeObj) => {
+                const nodeId = nodeObj.id || nodeObj;
+                nextNodeData.set(String(nodeId), Object.assign({}, nodeObj.data || {}));
+            });
+
+            (renderData.edges || []).forEach((edgeObj, index) => {
+                const source = edgeObj.source;
+                const target = edgeObj.target;
+                const edgeData = Object.assign({}, edgeObj.data || {});
+                const edgeType = edgeData.edge_type || 'unknown';
+                const sourceDomain = (renderData.switchDomainMap || {})[String(source)] || 'Domain-Unknown';
+                const targetDomain = (renderData.switchDomainMap || {})[String(target)] || 'Domain-Unknown';
+                edgeData.edge_type = edgeType;
+                edgeData.inter_domain = sourceDomain !== targetDomain;
+                edgeData.source_domain = sourceDomain;
+                edgeData.target_domain = targetDomain;
+                nextEdgeData.set(stableEdgeId(edgeType, source, target, index), edgeData);
+            });
+
+            graphNodeDataById = nextNodeData;
+            graphEdgeDataById = nextEdgeData;
+        }
+
+        function getNodeMetadata(nodeId, fallbackNode) {
+            const cached = graphNodeDataById.get(String(nodeId));
+            const fallback = (fallbackNode && fallbackNode.nodeData) || {};
+            if (!cached) return fallback;
+            const merged = Object.assign({}, fallback, cached);
+            if (Array.isArray(fallback.flow_table)) merged.flow_table = fallback.flow_table;
+            if (fallback.flow_table_error) merged.flow_table_error = fallback.flow_table_error;
+            return merged;
+        }
+
+        function getEdgeMetadata(edgeId, fallbackEdge) {
+            const cached = graphEdgeDataById.get(String(edgeId));
+            return cached || ((fallbackEdge && fallbackEdge.data) || {});
         }
 
         function buildSwitchLinkKeySetFromPath(path) {
@@ -1078,6 +1122,42 @@ def get_web_ui_html():
 
             lastHighlightedNodeIds = currentNodeIds;
             lastHighlightedEdgeIds = currentEdgeIds;
+        }
+
+        function restoreEdgeVisual(edgeId) {
+            if (!edges || !edgeId) return;
+            const edge = edges.get(edgeId);
+            if (!edge) return;
+            const update = { id: edge.id };
+            if (edge.originalColor) update.color = edge.originalColor;
+            if (typeof edge.originalWidth === 'number') update.width = edge.originalWidth;
+            if (edge.originalDashes !== undefined) update.dashes = edge.originalDashes;
+            edges.update(update);
+        }
+
+        function setHoveredEdge(edgeId) {
+            if (!edges || !edgeId) return;
+            if (hoveredEdgeId && String(hoveredEdgeId) !== String(edgeId)) {
+                restoreEdgeVisual(hoveredEdgeId);
+            }
+            hoveredEdgeId = edgeId;
+            const edge = edges.get(edgeId);
+            if (!edge) return;
+            edges.update({
+                id: edge.id,
+                color: { color: '#f8fafc', highlight: '#ffffff', hover: '#ffffff' },
+                width: Math.max((edge.originalWidth || edge.width || 2) + 2.4, 6),
+                dashes: false
+            });
+        }
+
+        function clearHoveredEdge(edgeId) {
+            if (!hoveredEdgeId) return;
+            if (edgeId && String(edgeId) !== String(hoveredEdgeId)) return;
+            const restoredId = hoveredEdgeId;
+            hoveredEdgeId = null;
+            restoreEdgeVisual(restoredId);
+            applyRouteSessionHighlight();
         }
 
         function selectRouteSessionById(sessionId) {
@@ -1991,6 +2071,14 @@ def get_web_ui_html():
                         // 点击空白处不关闭侧边栏，保持选中状态
                     }
                 });
+                network.on('hoverEdge', function(params) {
+                    if (params && params.edge) {
+                        setHoveredEdge(params.edge);
+                    }
+                });
+                network.on('blurEdge', function(params) {
+                    clearHoveredEdge(params && params.edge);
+                });
                 network.on('dragEnd', function(params) {
                     if (params && Array.isArray(params.nodes) && params.nodes.length > 0) {
                         cacheDraggedSwitchPositions(params.nodes);
@@ -2028,6 +2116,7 @@ def get_web_ui_html():
                 
                 const data = await response.json();
                 debugLog('成功获取拓扑数据:', data);
+                refreshGraphMetadataCache(data);
 
                 try {
                     const routeResp = await fetch('/api/route_sessions');
@@ -2059,11 +2148,9 @@ def get_web_ui_html():
                 }
                 updateRouteSessionsPanel();
 
-                const graphSignature = computeGraphSignature(data);
                 const topologySignature = computeTopologySignature(data);
-                if (graphSignature !== lastGraphSignature || topologySignature !== lastTopologySignature) {
+                if (topologySignature !== lastTopologySignature) {
                     updateNetwork(data);
-                    lastGraphSignature = graphSignature;
                     lastTopologySignature = topologySignature;
                 } else {
                     applyRouteSessionHighlight();
@@ -2634,7 +2721,7 @@ def get_web_ui_html():
             if (!edge) return;
             currentSelectedSwitchId = null;
 
-            const edgeData = edge.data || {};
+            const edgeData = getEdgeMetadata(edgeId, edge);
             const fromNode = nodes.get(edge.from);
             const toNode = nodes.get(edge.to);
             const srcId = fromNode ? fromNode.id : edge.from;
@@ -2749,7 +2836,7 @@ def get_web_ui_html():
             if (!node) return;
             
             const nodeType = node.nodeType || 'unknown';
-            const nodeData = node.nodeData || {};
+            const nodeData = getNodeMetadata(nodeId, node);
             const connectionCounts = nodeData.connection_counts || {};
             currentSelectedSwitchId = (nodeType === 'switch') ? node.id : null;
             
