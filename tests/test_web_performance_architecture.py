@@ -122,3 +122,27 @@ def test_topology_refresh_does_not_repeat_auto_fit():
     assert "function fitInitialTopologyOnce" in text
     assert "network.fit({" not in update_body
     assert "fitInitialTopologyOnce()" in update_body
+
+
+def test_hover_handlers_do_not_mutate_graph_dataset():
+    text = (ROOT / "web_ui_html.py").read_text(encoding="utf-8")
+    hover_body = text[text.index("function setHoveredEdge"):text.index("function selectRouteSessionById")]
+    options_body = text[text.index("const options = {"):text.index("configure:")]
+
+    assert "edges.update" not in hover_body
+    assert "nodes.update" not in hover_body
+    assert "chosen: false" in options_body
+    assert "selectConnectedEdges: false" in options_body
+
+
+def test_route_session_click_uses_event_delegation_and_selection_fallback():
+    text = (ROOT / "web_ui_html.py").read_text(encoding="utf-8")
+    panel_body = text[text.index("function updateRouteSessionsPanel"):text.index("function applyRouteSessionHighlight")]
+    highlight_body = text[text.index("function applyRouteSessionHighlight"):text.index("function setHoveredEdge")]
+
+    assert "onclick=\"selectRouteSessionById" not in panel_body
+    assert "data-session-id" in panel_body
+    assert "addEventListener('click'" in text
+    assert "network.selectNodes" in highlight_body
+    assert "network.selectEdges" in highlight_body
+    assert "network.unselectAll" in highlight_body

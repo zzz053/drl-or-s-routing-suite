@@ -1086,7 +1086,7 @@ def get_web_ui_html():
                 const reason = item.fallback_reason || '';
                 const decisionText = source + ' / ' + modelUsed + (reason ? ' / ' + reason : '');
                 return (
-                    '<div class="route-session-item' + activeClass + '" onclick="selectRouteSessionById(\\'' + sanitizeHtml(item.id) + '\\')">' +
+                    '<div class="route-session-item' + activeClass + '" data-session-id="' + sanitizeHtml(item.id) + '">' +
                         '<div class="route-session-path">' + sanitizeHtml(pathText || '-') + '</div>' +
                         '<div class="route-session-meta">' + sanitizeHtml(decisionText) + '</div>' +
                     '</div>'
@@ -1156,6 +1156,15 @@ def get_web_ui_html():
                 });
             });
 
+            if (network) {
+                if (currentNodeIds.size || currentEdgeIds.size) {
+                    network.selectNodes(Array.from(currentNodeIds), false);
+                    network.selectEdges(Array.from(currentEdgeIds));
+                } else if (lastHighlightedNodeIds.size || lastHighlightedEdgeIds.size) {
+                    network.unselectAll();
+                }
+            }
+
             lastHighlightedNodeIds = currentNodeIds;
             lastHighlightedEdgeIds = currentEdgeIds;
         }
@@ -1173,27 +1182,13 @@ def get_web_ui_html():
 
         function setHoveredEdge(edgeId) {
             if (!edges || !edgeId) return;
-            if (hoveredEdgeId && String(hoveredEdgeId) !== String(edgeId)) {
-                restoreEdgeVisual(hoveredEdgeId);
-            }
             hoveredEdgeId = edgeId;
-            const edge = edges.get(edgeId);
-            if (!edge) return;
-            edges.update({
-                id: edge.id,
-                color: { color: '#f8fafc', highlight: '#ffffff', hover: '#ffffff' },
-                width: Math.max((edge.originalWidth || edge.width || 2) + 2.4, 6),
-                dashes: false
-            });
         }
 
         function clearHoveredEdge(edgeId) {
             if (!hoveredEdgeId) return;
             if (edgeId && String(edgeId) !== String(hoveredEdgeId)) return;
-            const restoredId = hoveredEdgeId;
             hoveredEdgeId = null;
-            restoreEdgeVisual(restoredId);
-            applyRouteSessionHighlight();
         }
 
         function selectRouteSessionById(sessionId) {
@@ -2027,14 +2022,7 @@ def get_web_ui_html():
                         x: 2,
                         y: 2
                     },
-                    chosen: {
-                        node: function(values, id, selected, hovering) {
-                            if (selected || hovering) {
-                                values.borderWidth = 4;
-                                values.shadow = true;
-                            }
-                        }
-                    },
+                    chosen: false,
                     shapeProperties: {
                         useBorderWithImage: true
                     }
@@ -2056,6 +2044,9 @@ def get_web_ui_html():
                         type: 'curvedCW',
                         roundness: 0.2
                     },
+                    chosen: false,
+                    hoverWidth: 0,
+                    selectionWidth: 0,
                     arrows: {
                         to: {
                             enabled: true,
@@ -2078,7 +2069,7 @@ def get_web_ui_html():
                     dragNodes: true,
                     dragView: true,
                     zoomView: true,
-                    selectConnectedEdges: true
+                    selectConnectedEdges: false
                 },
                 configure: {
                     enabled: false
@@ -2116,6 +2107,17 @@ def get_web_ui_html():
                 network.on('blurEdge', function(params) {
                     clearHoveredEdge(params && params.edge);
                 });
+                const routeSessionsList = document.getElementById('route-sessions-list');
+                if (routeSessionsList) {
+                    routeSessionsList.addEventListener('click', function(event) {
+                        const item = event.target.closest('.route-session-item');
+                        if (!item) return;
+                        const sessionId = item.getAttribute('data-session-id');
+                        if (sessionId) {
+                            selectRouteSessionById(sessionId);
+                        }
+                    });
+                }
                 network.on('dragEnd', function(params) {
                     if (params && Array.isArray(params.nodes) && params.nodes.length > 0) {
                         cacheDraggedSwitchPositions(params.nodes);
