@@ -831,6 +831,11 @@ def get_web_ui_html():
         let selectedRouteSessionSignature = null;
         let isRefreshInFlight = false;
         let lastGraphSignature = null;
+        let lastTopologySignature = null;
+        let lastLayoutSignature = null;
+        let lastHighlightedNodeIds = new Set();
+        let lastHighlightedEdgeIds = new Set();
+        let switchLinkEdgeIdsByKey = new Map();
         const WEB_DEBUG = false;
         const compactModeStorageKey = 'hydrateCompactModeEnabled';
         const compactPositionStorageKey = 'hydrateCompactSwitchPositions';
@@ -912,6 +917,60 @@ def get_web_ui_html():
             return JSON.stringify({ nodes: nodeParts, edges: edgeParts });
         }
 
+        function computeTopologySignature(data) {
+            const nodeParts = (data.nodes || []).map((item) => {
+                const nodeData = item.data || {};
+                return [
+                    String(item.id),
+                    nodeData.node_type || '',
+                    nodeData.gateway_ip || ''
+                ].join(':');
+            }).sort();
+            const edgeParts = (data.edges || []).map((item) => {
+                const edgeData = item.data || {};
+                return [
+                    String(item.source),
+                    String(item.target),
+                    edgeData.edge_type || '',
+                    edgeData.status || ''
+                ].join(':');
+            }).sort();
+            return JSON.stringify({ nodes: nodeParts, edges: edgeParts });
+        }
+
+        function syncDataSet(dataSet, desiredItems) {
+            const desiredIds = new Set(desiredItems.map((item) => String(item.id)));
+            const currentIds = dataSet.getIds();
+            const toRemove = currentIds.filter((id) => {
+                const key = String(id);
+                return !desiredIds.has(key) && !key.startsWith('phantom-sl-');
+            });
+            const toAdd = [];
+            const toUpdate = [];
+
+            desiredItems.forEach((item) => {
+                if (dataSet.get(item.id)) {
+                    toUpdate.push(item);
+                } else {
+                    toAdd.push(item);
+                }
+            });
+
+            if (toRemove.length) dataSet.remove(toRemove);
+            if (toUpdate.length) dataSet.update(toUpdate);
+            if (toAdd.length) dataSet.add(toAdd);
+        }
+
+        function stableEdgeId(edgeType, source, target, index) {
+            return [
+                'edge',
+                edgeType || 'unknown',
+                String(source),
+                String(target),
+                String(index)
+            ].join('|');
+        }
+
         function buildSwitchLinkKeySetFromPath(path) {
             const keys = new Set();
             const arr = Array.isArray(path) ? path.map((x) => String(x)) : [];
@@ -959,78 +1018,66 @@ def get_web_ui_html():
         function applyRouteSessionHighlight() {
             if (!nodes || !edges) return;
             const active = getActiveRouteSession();
+            const currentNodeIds = new Set();
+            const currentEdgeIds = new Set();
 
-            if (!active) {
-                nodes.get().forEach((node) => {
-                    const update = { id: node.id };
-                    if (node.originalColor) update.color = node.originalColor;
-                    if (typeof node.originalSize === 'number') update.size = node.originalSize;
-                    nodes.update(update);
+            if (active) {
+                const switchPath = Array.isArray(active.switch_path) ? active.switch_path.map((x) => String(x)) : [];
+                switchPath.forEach((nodeId) => currentNodeIds.add(nodeId));
+                buildSwitchLinkKeySetFromPath(switchPath).forEach((linkKey) => {
+                    const edgeIds = switchLinkEdgeIdsByKey.get(linkKey) || [];
+                    edgeIds.forEach((edgeId) => currentEdgeIds.add(edgeId));
                 });
-                edges.get().forEach((edge) => {
-                    const update = { id: edge.id };
-                    if (edge.originalColor) update.color = edge.originalColor;
-                    if (typeof edge.originalWidth === 'number') update.width = edge.originalWidth;
-                    if (edge.originalDashes !== undefined) update.dashes = edge.originalDashes;
-                    edges.update(update);
-                });
-                return;
             }
 
-            const switchPath = Array.isArray(active.switch_path) ? active.switch_path.map((x) => String(x)) : [];
-            const switchSet = new Set(switchPath);
-            const edgeSet = buildSwitchLinkKeySetFromPath(switchPath);
-
-            nodes.get().forEach((node) => {
-                const nodeId = String(node.id);
-                const onPath = switchSet.has(nodeId);
-                if (onPath) {
-                    nodes.update({
-                        id: node.id,
-                        color: {
-                            background: '#78350f',
-                            border: '#f59e0b',
-                            highlight: { background: '#92400e', border: '#fbbf24' }
-                        },
-                        size: Math.max((node.originalSize || node.size || 30) + 2, 36)
-                    });
-                } else {
-                    nodes.update({
-                        id: node.id,
-                        color: {
-                            background: '#0f172a',
-                            border: '#334155',
-                            highlight: { background: '#111827', border: '#475569' }
-                        },
-                        size: Math.max((node.originalSize || node.size || 30) - 2, 26)
-                    });
-                }
+            lastHighlightedNodeIds.forEach((nodeId) => {
+                if (currentNodeIds.has(nodeId)) return;
+                const node = nodes.get(nodeId);
+                if (!node) return;
+                const update = { id: node.id };
+                if (node.originalColor) update.color = node.originalColor;
+                if (typeof node.originalSize === 'number') update.size = node.originalSize;
+                nodes.update(update);
             });
 
-            edges.get().forEach((edge) => {
-                const edgeType = (edge.data && edge.data.edge_type) || '';
-                const onPath = edgeType === 'switch_link' && edgeSet.has(canonicalSwitchLinkKey(edge.from, edge.to));
-                if (onPath) {
-                    edges.update({
-                        id: edge.id,
-                        color: { color: '#f59e0b', highlight: '#fbbf24', hover: '#fde68a' },
-                        width: Math.max((edge.originalWidth || edge.width || 2) + 1.8, 5),
-                        dashes: false
-                    });
-                } else {
-                    edges.update({
-                        id: edge.id,
-                        // 非高亮链路保留更高可见度，避免路径模式下“看不见其他链路”
-                        color: {
-                            color: '#ffffff',
-                            highlight: '#ffffff',
-                            hover: '#ffffff'
-                        },
-                        width: 2.1,
-                        dashes: false
-                    });
-                }
+            currentNodeIds.forEach((nodeId) => {
+                const node = nodes.get(nodeId);
+                if (!node) return;
+                nodes.update({
+                    id: node.id,
+                    color: {
+                        background: '#78350f',
+                        border: '#f59e0b',
+                        highlight: { background: '#92400e', border: '#fbbf24' }
+                    },
+                    size: Math.max((node.originalSize || node.size || 30) + 2, 36)
+                });
             });
+
+            lastHighlightedEdgeIds.forEach((edgeId) => {
+                if (currentEdgeIds.has(edgeId)) return;
+                const edge = edges.get(edgeId);
+                if (!edge) return;
+                const update = { id: edge.id };
+                if (edge.originalColor) update.color = edge.originalColor;
+                if (typeof edge.originalWidth === 'number') update.width = edge.originalWidth;
+                if (edge.originalDashes !== undefined) update.dashes = edge.originalDashes;
+                edges.update(update);
+            });
+
+            currentEdgeIds.forEach((edgeId) => {
+                const edge = edges.get(edgeId);
+                if (!edge) return;
+                edges.update({
+                    id: edge.id,
+                    color: { color: '#f59e0b', highlight: '#fbbf24', hover: '#fde68a' },
+                    width: Math.max((edge.originalWidth || edge.width || 2) + 1.8, 5),
+                    dashes: false
+                });
+            });
+
+            lastHighlightedNodeIds = currentNodeIds;
+            lastHighlightedEdgeIds = currentEdgeIds;
         }
 
         function selectRouteSessionById(sessionId) {
@@ -2013,9 +2060,11 @@ def get_web_ui_html():
                 updateRouteSessionsPanel();
 
                 const graphSignature = computeGraphSignature(data);
-                if (graphSignature !== lastGraphSignature) {
+                const topologySignature = computeTopologySignature(data);
+                if (graphSignature !== lastGraphSignature || topologySignature !== lastTopologySignature) {
                     updateNetwork(data);
                     lastGraphSignature = graphSignature;
+                    lastTopologySignature = topologySignature;
                 } else {
                     applyRouteSessionHighlight();
                 }
@@ -2057,12 +2106,11 @@ def get_web_ui_html():
                 
                 stopAllLinkRemovalBlinks();
                 const prevSwitchLinkMap = extractPrevSwitchLinkEndpoints(edges);
-                
-                // 清空现有数据
-                nodes.clear();
-                edges.clear();
-                
-                // 添加节点
+                const desiredNodes = [];
+                const desiredEdges = [];
+                const nextSwitchLinkEdgeIdsByKey = new Map();
+
+                // 构建节点快照
                 let addedNodes = 0;
                 // 按节点类型分组，用于编号
                 const nodeTypeCounters = {
@@ -2133,7 +2181,7 @@ def get_web_ui_html():
                         debugLog(`添加节点 ${index}: ID=${nodeId}, Type=${nodeType}, Label=${label}, Icon=${iconType}`);
                         
                         // 存储完整的节点信息，包括原始数据和统计信息
-                        nodes.add({
+                        desiredNodes.push({
                             id: nodeId,
                             label: label,
                             color: color,
@@ -2228,8 +2276,17 @@ def get_web_ui_html():
                         if (sourceDomain) safeEdgeData.source_domain = sourceDomain;
                         if (targetDomain) safeEdgeData.target_domain = targetDomain;
 
-                        edges.add({
-                            id: `edge-${index}`,
+                        const edgeId = stableEdgeId(edgeType, source, target, index);
+                        if (edgeType === 'switch_link') {
+                            const linkKey = canonicalSwitchLinkKey(source, target);
+                            if (!nextSwitchLinkEdgeIdsByKey.has(linkKey)) {
+                                nextSwitchLinkEdgeIdsByKey.set(linkKey, []);
+                            }
+                            nextSwitchLinkEdgeIdsByKey.get(linkKey).push(edgeId);
+                        }
+
+                        desiredEdges.push({
+                            id: edgeId,
                             from: source,
                             to: target,
                             color: color,
@@ -2251,12 +2308,30 @@ def get_web_ui_html():
                 });
                 
                 debugLog('已添加边数:', addedEdges, '/', renderEdges.length);
-                
-                // 应用自定义分层布局
-                debugLog('开始应用自定义分层布局...');
-                // 普通模式暂时停用：仅执行精简布局。
+
+                syncDataSet(nodes, desiredNodes);
+                syncDataSet(edges, desiredEdges);
+                switchLinkEdgeIdsByKey = nextSwitchLinkEdgeIdsByKey;
+
+                const topologySignature = computeTopologySignature(data);
                 currentSwitchDomainMap = renderData.switchDomainMap || {};
-                applyCompactLayout(renderNodes, currentSwitchDomainMap, renderEdges);
+                if (topologySignature !== lastLayoutSignature) {
+                    debugLog('开始应用自定义分层布局...');
+                    applyCompactLayout(renderNodes, currentSwitchDomainMap, renderEdges);
+                    lastLayoutSignature = topologySignature;
+
+                    if (network) {
+                        setTimeout(() => {
+                            network.fit({
+                                animation: {
+                                    duration: 500,
+                                    easingFunction: 'easeInOutQuad'
+                                }
+                            });
+                        }, 100);
+                    }
+                }
+                lastTopologySignature = topologySignature;
                 
                 // 上一帧存在、本帧消失的交换机间链路：保留 3 秒红/橙闪烁提示
                 prevSwitchLinkMap.forEach(function(pair, key) {
@@ -2277,18 +2352,6 @@ def get_web_ui_html():
                     });
                     startLinkRemovalBlink(phantomId);
                 });
-                
-                // 触发网络图更新
-                if (network) {
-                    setTimeout(() => {
-                        network.fit({
-                            animation: {
-                                duration: 500,
-                                easingFunction: 'easeInOutQuad'
-                            }
-                        });
-                    }, 100);
-                }
                 applyRouteSessionHighlight();
                 
                 debugLog('拓扑布局完成');

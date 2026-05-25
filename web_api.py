@@ -176,75 +176,24 @@ def register_web_api_routes(app, get_server_agent):
 
         try:
             include_flows = str(request.args.get('include_flows', '0')).lower() in ('1', 'true', 'yes')
-            nodes_list = []
-            for node_id, node_data in server_agent.G.nodes(data=True):
-                safe_id = node_id
-                try:
-                    json.dumps(node_id)
-                except (TypeError, ValueError):
-                    safe_id = str(node_id)
-
-                node_type = node_data.get('node_type', 'unknown')
-                neighbors = list(server_agent.G.neighbors(node_id))
-                connection_counts = {}
-
-                if node_type == 'root_controller':
-                    controller_count = sum(1 for n in neighbors
-                                           if server_agent.G.nodes[n].get('node_type') == 'controller')
-                    connection_counts['controllers'] = controller_count
-                elif node_type == 'controller':
-                    switch_count = sum(1 for n in neighbors
-                                       if server_agent.G.nodes[n].get('node_type') == 'switch')
-                    connection_counts['switches'] = switch_count
-                elif node_type == 'switch':
-                    host_count = sum(1 for n in neighbors
-                                     if server_agent.G.nodes[n].get('node_type') == 'host')
-                    connection_counts['hosts'] = host_count
-
-                node_data_with_stats = _prepare_node_data_for_graph(node_data, include_flows=include_flows)
-                node_data_with_stats['connection_counts'] = connection_counts
-
-                nodes_list.append({
-                    'id': safe_id,
-                    'data': node_data_with_stats
-                })
-
-            edges_list = []
-            for src, dst, edge_data in server_agent.G.edges(data=True):
-                try:
-                    json.dumps(src)
-                except (TypeError, ValueError):
-                    src = str(src)
-                try:
-                    json.dumps(dst)
-                except (TypeError, ValueError):
-                    dst = str(dst)
-
-                edge_dict = {
-                    'source': src,
-                    'target': dst,
-                    'data': {}
-                }
-                for key, value in (edge_data or {}).items():
-                    try:
-                        json.dumps(value)
-                        edge_dict['data'][key] = value
-                    except (TypeError, ValueError):
-                        edge_dict['data'][key] = str(value)
-
-                edges_list.append(edge_dict)
-
+            snapshot = server_agent.web_state.get_graph_snapshot(include_flows=include_flows)
             graph_data = {
-                'nodes': nodes_list,
-                'edges': edges_list
+                'nodes': snapshot.get('nodes', []),
+                'edges': snapshot.get('edges', []),
+                'versions': snapshot.get('versions', {}),
             }
 
-            logger.debug(f"API /api/graph 返回: {len(nodes_list)} 个节点, {len(edges_list)} 条边")
+            logger.debug(
+                "API /api/graph 返回: %s 个节点, %s 条边, versions=%s",
+                len(graph_data['nodes']),
+                len(graph_data['edges']),
+                graph_data['versions'],
+            )
             return jsonify(graph_data)
         except Exception as e:
             logger.error(f"API /api/graph 错误: {e}")
             logger.error(traceback.format_exc())
-            return jsonify({'error': str(e), 'nodes': [], 'edges': []}), 500
+            return jsonify({'error': str(e), 'nodes': [], 'edges': [], 'versions': {}}), 500
 
     @app.route('/api/switch/<switch_id>/flows', methods=['GET'])
     def get_switch_flows(switch_id):
@@ -254,12 +203,7 @@ def register_web_api_routes(app, get_server_agent):
 
         sid = _normalize_switch_id(switch_id)
         try:
-            flows = server_agent._get_switch_flow_table(sid)
-            return jsonify({
-                'switch_id': sid,
-                'flows': flows,
-                'flow_count': len(flows),
-            })
+            return jsonify(server_agent.web_state.get_switch_flows(sid))
         except Exception as e:
             logger.error("API /api/switch/%s/flows 错误: %s", switch_id, e)
             return jsonify({'error': str(e), 'switch_id': switch_id, 'flows': []}), 500

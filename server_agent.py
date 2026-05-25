@@ -36,6 +36,7 @@ from server_path_service import (
 )
 from web_api import register_web_api_routes
 from web_ui_html import get_web_ui_html
+from web_state_store import WebStateStore
 from server_message_handlers import (
     process_message as process_message_handler,
     heartbeat_check_loop as heartbeat_check_loop_handler,
@@ -48,7 +49,7 @@ SERVER_AGENT_LOG_FILE = os.path.join(LOG_DIR, "server_agent.log")
 
 # 配置日志
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=getattr(logging, os.environ.get("SERVER_AGENT_LOG_LEVEL", "INFO").upper(), logging.INFO),
     format='%(asctime)s [%(levelname)s] %(message)s',
     handlers=[
         logging.StreamHandler(),  # 输出到控制台
@@ -117,6 +118,7 @@ class ServerAgent:
         self.controller_route_sessions = {}  # {(controller_ip, port): [route_session, ...]}
         # 交换机真实流表缓存（由各控制器周期上报）
         self.switch_flow_tables = {}  # {switch_id: [flow_entry, ...]}
+        self.web_state = WebStateStore(self)
         
         # 用于记录PortData查询请求的发起者
         # key: request_id, value: (请求控制器地址, 查询时间)
@@ -172,6 +174,8 @@ class ServerAgent:
         self.switch_flow_tables[sid] = list(flow_table or [])
         if sid in self.G.nodes:
             self.G.nodes[sid]['flow_table'] = list(self.switch_flow_tables[sid])
+        if hasattr(self, 'web_state'):
+            self.web_state.mark_switch_flows_dirty(sid)
 
     def _get_switch_flow_table(self, switch_id):
         sid = self._normalize_switch_id(switch_id)
@@ -279,6 +283,7 @@ class ServerAgent:
                 session for session in route_sessions
                 if session.get('session_id') not in removed_sessions
             ]
+            self.web_state.mark_route_sessions_dirty()
 
         logger.info(
             "flow_removed cached: controller=%s switch=%s priority=%s reason=%s removed=%s",
@@ -469,6 +474,7 @@ class ServerAgent:
         route_sessions = message.get('route_sessions')
         if isinstance(route_sessions, list):
             self.controller_route_sessions[controller_key] = route_sessions
+            self.web_state.mark_route_sessions_dirty()
             logger.info(f"更新控制器 {controller_key} 的路径会话: {len(route_sessions)} 条")
         
         # 更新图
@@ -711,7 +717,7 @@ class ServerAgent:
             # 从控制器连接到根控制器
             self.G.add_edge(root_controller_id, controller_id, 
                           edge_type='controller_connection', weight=1)
-            logger.info(f"添加控制器节点: {controller_id} (IP: {ip}, Port: {port})")
+            logger.debug(f"添加控制器节点: {controller_id} (IP: {ip}, Port: {port})")
         
         # 添加拓扑链路
         for controller_key, links in self.topo.items():
@@ -793,7 +799,7 @@ class ServerAgent:
                                     self.G.add_edge(controller_id, dst, 
                                                   edge_type='controller_switch', weight=0.5)
                     
-                    logger.info(f"添加边: {src} -> {dst}, 权重: {weight}")
+                    logger.debug(f"添加边: {src} -> {dst}, 权重: {weight}")
         
         # 添加交换机节点（即使没有链路）
         for controller_key, switches in self.controller_to_switches.items():
@@ -874,12 +880,11 @@ class ServerAgent:
                     self.G.add_edge(dpid, ip, weight=1, controller=controller_key,
                                   edge_type='host_switch')
                     
-                    logger.info(f"添加主机连接: {mac} <-> {dpid}, IP: {ip}")
+                    logger.debug(f"添加主机连接: {mac} <-> {dpid}, IP: {ip}")
         
         logger.info(f"更新网络图完成: {len(self.G.nodes)} 个节点, {len(self.G.edges)} 条边")
         # print(f"更新网络图完成: {len(self.G.nodes)} 个节点, {len(self.G.edges)} 条边")
-        print(f"**********G图节点: {list(self.G.nodes())}")
-        print(f"**********G图边: {list(self.G.edges(data=True))}")
+        self.web_state.mark_topology_dirty()
     
     def _lookup_host_mac(self, ip):
         for hosts in self.host.values():
@@ -1205,78 +1210,26 @@ class ServerAgent:
         print("服务器已停止")
 
     def print_topo_info_loop(self):
-        """定时打印拓扑信息"""
-        logger.info("定时打印线程开始运行")
-        # print("定时打印线程开始运行")
-        
+        """Periodically emit a compact topology summary for operations."""
+        logger.info("topology summary thread started")
+
         while True:
             try:
-                # 先打印一条日志确认线程在运行
-                logger.info("定时打印线程正在运行...")
-                # print("定时打印线程正在运行...")
-                
-                if self.topo or self.host or self.controller_to_switches:
-                    logger.info("=" * 50)
-                    logger.info("当前拓扑信息:")
-                    
-                    # 打印控制器信息
-                    logger.info(f"已连接控制器数量: {len(self.clients)}")
-                    for client_addr in self.clients:
-                        logger.info(f"  - 控制器: {client_addr}")
-                    
-                    # 打印交换机信息
-                    all_switches = set()
-                    for controller_key, switches in self.controller_to_switches.items():
-                        all_switches.update(switches)
-                    logger.info(f"交换机总数: {len(all_switches)}")
-                    for controller_key, switches in self.controller_to_switches.items():
-                        controller_str = f"{controller_key[0]}:{controller_key[1]}" if isinstance(controller_key, tuple) else str(controller_key)
-                        logger.info(f"  - 控制器 {controller_str} 管理的交换机: {switches}")
-                    
-                    # 打印链路信息
-                    all_links = []
-                    for controller_key, links in self.topo.items():
-                        all_links.extend(links)
-                    logger.info(f"链路总数: {len(all_links)}")
-                    for controller_key, links in self.topo.items():
-                        controller_str = f"{controller_key[0]}:{controller_key[1]}" if isinstance(controller_key, tuple) else str(controller_key)
-                        logger.info(f"  - 控制器 {controller_str} 的链路:")
-                        for link in links:
-                            logger.info(f"    * {link}")
-                    
-                    # 打印主机信息
-                    all_hosts = []
-                    for controller_key, hosts in self.host.items():
-                        all_hosts.extend(hosts)
-                    logger.info(f"主机总数: {len(all_hosts)}")
-                    for controller_key, hosts in self.host.items():
-                        controller_str = f"{controller_key[0]}:{controller_key[1]}" if isinstance(controller_key, tuple) else str(controller_key)
-                        logger.info(f"  - 控制器 {controller_str} 的主机:")
-                        for host in hosts:
-                            logger.info(f"    * {host}")
-                    
-                    # 打印图信息
-                    logger.info(f"图节点数: {len(self.G.nodes)}, 边数: {len(self.G.edges)}")
-                    logger.info("=" * 50)
-                    
-                    # 同时打印到控制台
-                    print("=" * 50)
-                    print("当前拓扑信息:")
-                    print(f"已连接控制器数量: {len(self.clients)}")
-                    print(f"交换机总数: {len(all_switches)}")
-                    print(f"链路总数: {len(all_links)}")
-                    print(f"主机总数: {len(all_hosts)}")
-                    print(f"图节点数: {len(self.G.nodes)}, 边数: {len(self.G.edges)}")
-                    print("=" * 50)
-                else:
-                    logger.info("当前没有拓扑信息")
-                    # print("当前没有拓扑信息")
+                switch_count = sum(len(switches) for switches in self.controller_to_switches.values())
+                link_count = sum(len(links) for links in self.topo.values())
+                host_count = sum(len(hosts) for hosts in self.host.values())
+                logger.debug(
+                    "topology summary controllers=%s switches=%s links=%s hosts=%s graph_nodes=%s graph_edges=%s",
+                    len(self.clients),
+                    switch_count,
+                    link_count,
+                    host_count,
+                    len(self.G.nodes),
+                    len(self.G.edges),
+                )
             except Exception as e:
-                logger.error(f"打印拓扑信息时出错: {e}")
-                print(f"打印拓扑信息时出错: {e}")
-                traceback.print_exc()
-            
-            # 每10秒打印一次
+                logger.error("topology summary failed: %s", e)
+
             time.sleep(10)
     
 
