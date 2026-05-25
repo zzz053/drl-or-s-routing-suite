@@ -610,10 +610,15 @@ class DRLPathService(object):
                             request_id = request.get("request_id")
                             topo_edges = request.get("topo_edges", None)
                             candidates = request.get("candidates") or []
+                            route_mode = request.get("route_mode", "unknown")
 
                             print("[请求] %d -> %d (ID: %s, topo_edges: %s)"
                                   % (src_node, dst_node, request_id,
                                      "%d条" % len(topo_edges) if topo_edges else "无"))
+                            print("[请求] route_mode=%s candidates=%d task=%s policy=%s"
+                                  % (route_mode, len(candidates),
+                                     request.get("task_type", "default"),
+                                     request.get("route_policy", "shortest_path")))
 
                             start_time = time.time()
                             decision = self.compute_path(src_node, dst_node, topo_edges)

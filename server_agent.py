@@ -1048,7 +1048,19 @@ class ServerAgent:
                         dst_dpid = node
                         break
             if src_dpid is None or dst_dpid is None:
+                logger.warning(
+                    "[DRL] skip path_service: missing endpoint switch src=%s src_dpid=%s dst=%s dst_dpid=%s",
+                    src_ip, src_dpid, dst_ip, dst_dpid
+                )
                 return None
+            candidates = build_k_shortest_candidates(
+                self.G,
+                src_ip,
+                dst_ip,
+                k=DRL_K_CANDIDATES,
+                link_down_set=self.link_down_set,
+                route_policy=route_policy,
+            )
 
             request = {
                 'type': 'path_request',
@@ -1056,19 +1068,17 @@ class ServerAgent:
                 'dst_node': dst_dpid,
                 'topo_edges': build_topo_edges_for_path_service(
                     self.G, self.link_down_set, route_policy),
-                'candidates': build_k_shortest_candidates(
-                    self.G,
-                    src_ip,
-                    dst_ip,
-                    k=DRL_K_CANDIDATES,
-                    link_down_set=self.link_down_set,
-                    route_policy=route_policy,
-                ),
+                'candidates': candidates,
                 'route_mode': message.get('route_mode', self.route_mode),
                 'route_policy': route_policy,
                 'task_type': message.get('task_type', 'default'),
                 'request_id': "%d-%d-%d" % (src_dpid, dst_dpid, int(time.time() * 1000)),
             }
+            logger.info(
+                "[DRL] request_path route_mode=%s src=%s(%s) dst=%s(%s) task=%s policy=%s candidates=%d",
+                request['route_mode'], src_ip, src_dpid, dst_ip, dst_dpid,
+                request['task_type'], route_policy, len(candidates)
+            )
             with self.path_service_lock:
                 if self.path_service_sock is None:
                     self._connect_path_service()
@@ -1090,6 +1100,12 @@ class ServerAgent:
                     return None
 
             if response.get('status') == 'ok' and response.get('path'):
+                logger.info(
+                    "[DRL] path_service response decision_source=%s model_used=%s fallback_reason=%s path=%s candidates=%s compute_time=%s",
+                    response.get('decision_source'), response.get('model_used'),
+                    response.get('fallback_reason'), response.get('path'),
+                    response.get('candidate_count'), response.get('compute_time')
+                )
                 return self._normalize_drl_decision(response, src_ip, dst_ip)
         except Exception as exc:
             logger.debug("[DRL] path_service call failed: %s", exc)

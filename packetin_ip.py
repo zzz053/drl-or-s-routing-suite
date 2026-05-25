@@ -100,6 +100,11 @@ def handle_host_ip_packet_in(app, ev):
                     if len(queue) < 20:
                         queue.append((datapath, msg, in_port))
                     return
+                remote_hint = getattr(app, 'remote_hosts', {}).get(dst_ip)
+                app.logger.info(
+                    "[PathRequest] dst_not_local src=%s dst=%s src_switch=%s in_port=%s remote_hint=%s task=%s policy=%s",
+                    src_ip, dst_ip, dpid, in_port, remote_hint, task_type, route_policy
+                )
                 app._path_requested[cache_key] = now
                 app._pending_path_packets[cache_key] = [(datapath, msg, in_port)]
                 app._request_path(
@@ -108,6 +113,10 @@ def handle_host_ip_packet_in(app, ev):
                 )
                 return
             else:
+                app.logger.warning(
+                    "[PathRequest] dst_not_local_but_root_disconnected src=%s dst=%s src_switch=%s",
+                    src_ip, dst_ip, dpid
+                )
                 return
 
         src_switch_id = dpid
