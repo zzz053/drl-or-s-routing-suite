@@ -836,6 +836,7 @@ def get_web_ui_html():
         let lastHighlightedNodeIds = new Set();
         let lastHighlightedEdgeIds = new Set();
         let switchLinkEdgeIdsByKey = new Map();
+        let graphNodeIdsByKey = new Map();
         let graphNodeDataById = new Map();
         let graphEdgeDataById = new Map();
         let hoveredEdgeId = null;
@@ -974,11 +975,14 @@ def get_web_ui_html():
             const graphNodes = data.nodes || [];
             const graphEdges = data.edges || [];
             const renderData = buildCompactGraphData(graphNodes, graphEdges);
+            const nextNodeIds = new Map();
             const nextNodeData = new Map();
             const nextEdgeData = new Map();
+            const nextSwitchLinkEdgeIdsByKey = new Map();
 
             (renderData.nodes || []).forEach((nodeObj) => {
                 const nodeId = nodeObj.id || nodeObj;
+                nextNodeIds.set(String(nodeId), nodeId);
                 nextNodeData.set(String(nodeId), Object.assign({}, nodeObj.data || {}));
             });
 
@@ -993,11 +997,26 @@ def get_web_ui_html():
                 edgeData.inter_domain = sourceDomain !== targetDomain;
                 edgeData.source_domain = sourceDomain;
                 edgeData.target_domain = targetDomain;
-                nextEdgeData.set(stableEdgeId(edgeType, source, target, index), edgeData);
+                const edgeId = stableEdgeId(edgeType, source, target, index);
+                nextEdgeData.set(edgeId, edgeData);
+                if (edgeType === 'switch_link') {
+                    const linkKey = canonicalSwitchLinkKey(source, target);
+                    if (!nextSwitchLinkEdgeIdsByKey.has(linkKey)) {
+                        nextSwitchLinkEdgeIdsByKey.set(linkKey, []);
+                    }
+                    nextSwitchLinkEdgeIdsByKey.get(linkKey).push(edgeId);
+                }
             });
 
+            graphNodeIdsByKey = nextNodeIds;
             graphNodeDataById = nextNodeData;
             graphEdgeDataById = nextEdgeData;
+            switchLinkEdgeIdsByKey = nextSwitchLinkEdgeIdsByKey;
+        }
+
+        function getVisNodeId(nodeId) {
+            const key = String(nodeId);
+            return graphNodeIdsByKey.has(key) ? graphNodeIdsByKey.get(key) : nodeId;
         }
 
         function getNodeMetadata(nodeId, fallbackNode) {
@@ -1067,7 +1086,7 @@ def get_web_ui_html():
 
             if (active) {
                 const switchPath = Array.isArray(active.switch_path) ? active.switch_path.map((x) => String(x)) : [];
-                switchPath.forEach((nodeId) => currentNodeIds.add(nodeId));
+                switchPath.forEach((nodeId) => currentNodeIds.add(getVisNodeId(nodeId)));
                 buildSwitchLinkKeySetFromPath(switchPath).forEach((linkKey) => {
                     const edgeIds = switchLinkEdgeIdsByKey.get(linkKey) || [];
                     edgeIds.forEach((edgeId) => currentEdgeIds.add(edgeId));

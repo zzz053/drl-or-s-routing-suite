@@ -92,3 +92,14 @@ def test_frontend_has_direct_hover_edge_handlers():
     assert "network.on('hoverEdge'" in text
     assert "network.on('blurEdge'" in text
     assert "function setHoveredEdge" in text
+
+
+def test_route_session_highlight_uses_current_graph_id_maps():
+    text = (ROOT / "web_ui_html.py").read_text(encoding="utf-8")
+    metadata_body = text[text.index("function refreshGraphMetadataCache"):text.index("function getNodeMetadata")]
+    highlight_body = text[text.index("function applyRouteSessionHighlight"):text.index("function restoreEdgeVisual")]
+
+    assert "let graphNodeIdsByKey = new Map()" in text
+    assert "function getVisNodeId" in text
+    assert "switchLinkEdgeIdsByKey = nextSwitchLinkEdgeIdsByKey" in metadata_body
+    assert "getVisNodeId(nodeId)" in highlight_body
