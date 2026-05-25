@@ -18,7 +18,7 @@ echo $! > logs/path_service.pid
 
 sleep 1
 
-python3 server_agent.py > logs/server_agent.log 2>&1 &
+python3 server_agent.py > logs/server_agent.stdout.log 2>&1 &
 echo $! > logs/server_agent.pid
 
 sleep 1

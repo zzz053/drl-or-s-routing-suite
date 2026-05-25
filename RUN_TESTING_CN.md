@@ -120,10 +120,13 @@ drl-or-s-routing-suite/logs/
 ```bash
 tail -f logs/path_service.log
 tail -f logs/server_agent.log
+tail -f logs/server_agent.stdout.log
 tail -f logs/controllers.log
 tail -f logs/ryu_controller_<PORT>.log
 tail -f logs/mininet_topology.log
 ```
+
+`logs/server_agent.log` 是 `server_agent.py` 自身 logging 模块写入的主日志；`logs/server_agent.stdout.log` 只保存后台启动时的 stdout/stderr 输出。
 
 ## 5. 启动方式二：手动分步启动
 

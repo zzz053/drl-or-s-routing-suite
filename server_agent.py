@@ -9,6 +9,7 @@ import socket
 import threading
 import time
 import signal
+import os
 import networkx as nx
 import traceback
 from flask import Flask
@@ -41,13 +42,17 @@ from server_message_handlers import (
     cleanup_disconnected_client as cleanup_disconnected_client_handler,
 )
 
+LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+os.makedirs(LOG_DIR, exist_ok=True)
+SERVER_AGENT_LOG_FILE = os.path.join(LOG_DIR, "server_agent.log")
+
 # 配置日志
 logging.basicConfig(
     level=logging.DEBUG,
     format='%(asctime)s [%(levelname)s] %(message)s',
     handlers=[
         logging.StreamHandler(),  # 输出到控制台
-        logging.FileHandler("./server.log", mode='w', encoding='utf-8')  # 输出到文件,w模式覆盖原有日志, a模式追加
+        logging.FileHandler(SERVER_AGENT_LOG_FILE, mode='w', encoding='utf-8')
     ]
 )
 logger = logging.getLogger("server_agent")
