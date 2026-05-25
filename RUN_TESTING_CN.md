@@ -148,7 +148,7 @@ python3 drl-or-s/path_service.py --topo Military --port 8889
 
 ```bash
 cd drl-or-s-routing-suite
-python3 server_agent.py
+python3 server_agent.py hybrid
 ```
 
 期望现象：
