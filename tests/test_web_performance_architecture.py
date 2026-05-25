@@ -155,3 +155,14 @@ def test_route_session_click_uses_event_delegation_and_selection_fallback():
     assert "network.selectNodes" in highlight_body
     assert "network.selectEdges" in highlight_body
     assert "network.unselectAll" in highlight_body
+
+
+def test_route_session_highlight_is_visually_distinct():
+    text = (ROOT / "web_ui_html.py").read_text(encoding="utf-8")
+    highlight_body = text[text.index("function applyRouteSessionHighlight"):text.index("function setHoveredEdge")]
+
+    assert "#ecfeff" in highlight_body
+    assert "#06b6d4" in highlight_body
+    assert "shadow" in highlight_body
+    assert "width: Math.max((edge.originalWidth || edge.width || 2) + 5.5, 9)" in highlight_body
+    assert "dashes: [12, 4]" in highlight_body

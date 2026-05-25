@@ -1117,6 +1117,8 @@ def get_web_ui_html():
                 const update = { id: node.id };
                 if (node.originalColor) update.color = node.originalColor;
                 if (typeof node.originalSize === 'number') update.size = node.originalSize;
+                if (typeof node.originalBorderWidth === 'number') update.borderWidth = node.originalBorderWidth;
+                if (node.originalShadow !== undefined) update.shadow = node.originalShadow;
                 nodes.update(update);
             });
 
@@ -1126,11 +1128,20 @@ def get_web_ui_html():
                 nodes.update({
                     id: node.id,
                     color: {
-                        background: '#78350f',
-                        border: '#f59e0b',
-                        highlight: { background: '#92400e', border: '#fbbf24' }
+                        background: '#ecfeff',
+                        border: '#06b6d4',
+                        highlight: { background: '#cffafe', border: '#22d3ee' },
+                        hover: { background: '#cffafe', border: '#22d3ee' }
                     },
-                    size: Math.max((node.originalSize || node.size || 30) + 2, 36)
+                    borderWidth: 5,
+                    shadow: {
+                        enabled: true,
+                        color: 'rgba(6, 182, 212, 0.85)',
+                        size: 24,
+                        x: 0,
+                        y: 0
+                    },
+                    size: Math.max((node.originalSize || node.size || 30) + 7, 43)
                 });
             });
 
@@ -1142,6 +1153,7 @@ def get_web_ui_html():
                 if (edge.originalColor) update.color = edge.originalColor;
                 if (typeof edge.originalWidth === 'number') update.width = edge.originalWidth;
                 if (edge.originalDashes !== undefined) update.dashes = edge.originalDashes;
+                if (edge.originalShadow !== undefined) update.shadow = edge.originalShadow;
                 edges.update(update);
             });
 
@@ -1150,9 +1162,16 @@ def get_web_ui_html():
                 if (!edge) return;
                 edges.update({
                     id: edge.id,
-                    color: { color: '#f59e0b', highlight: '#fbbf24', hover: '#fde68a' },
-                    width: Math.max((edge.originalWidth || edge.width || 2) + 1.8, 5),
-                    dashes: false
+                    color: { color: '#06b6d4', highlight: '#22d3ee', hover: '#67e8f9' },
+                    width: Math.max((edge.originalWidth || edge.width || 2) + 5.5, 9),
+                    dashes: [12, 4],
+                    shadow: {
+                        enabled: true,
+                        color: 'rgba(103, 232, 249, 0.9)',
+                        size: 18,
+                        x: 0,
+                        y: 0
+                    }
                 });
             });
 
@@ -2320,7 +2339,15 @@ def get_web_ui_html():
                             nodeNumber: nodeNumber,
                             nodeData: nodeData,  // 存储完整的节点数据
                             originalColor: color,
-                            originalSize: size
+                            originalSize: size,
+                            originalBorderWidth: 2,
+                            originalShadow: {
+                                enabled: true,
+                                color: 'rgba(0,0,0,0.5)',
+                                size: 10,
+                                x: 2,
+                                y: 2
+                            }
                         });
                         
                         addedNodes++;
@@ -2424,7 +2451,12 @@ def get_web_ui_html():
                             data: safeEdgeData,
                             originalColor: color,
                             originalWidth: width,
-                            originalDashes: dashes
+                            originalDashes: dashes,
+                            originalShadow: {
+                                enabled: true,
+                                color: 'rgba(0,0,0,0.3)',
+                                size: 5
+                            }
                         });
                         
                         addedEdges++;
