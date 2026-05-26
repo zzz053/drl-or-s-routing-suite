@@ -198,3 +198,24 @@ def test_route_session_panel_formats_switch_path_labels():
     assert "function formatRouteSessionPath" in text
     assert "formatSwitchLabel" in text[text.index("function formatRouteSessionPath"):text.index("function sanitizeHtml")]
     assert "const pathText = formatRouteSessionPath(item)" in panel_body
+
+
+def test_topology_has_auto_arrange_button():
+    text = (ROOT / "web_ui_html.py").read_text(encoding="utf-8")
+    header_body = text[text.index("<div class=\"header-controls\">"):text.index("</header>")]
+
+    assert "arrange-topology-btn" in text
+    assert "onclick=\"arrangeTopology()\"" in header_body
+    assert "整理拓扑" in header_body
+
+
+def test_auto_arrange_resets_manual_positions_and_reapplies_layout():
+    text = (ROOT / "web_ui_html.py").read_text(encoding="utf-8")
+    arrange_body = text[text.index("function arrangeTopology"):text.index("async function refreshTopology")]
+
+    assert "switchManualPositions = {}" in arrange_body
+    assert "localStorage.removeItem(compactPositionStorageKey)" in arrange_body
+    assert "lastLayoutSignature = null" in arrange_body
+    assert "applyCompactLayout(lastCompactLayoutData.nodes" in arrange_body
+    assert "network.fit({" in arrange_body
+    assert "applyRouteSessionHighlight()" in arrange_body

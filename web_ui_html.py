@@ -122,6 +122,29 @@ def get_web_ui_html():
             cursor: pointer;
             white-space: nowrap;
         }
+        .arrange-topology-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            border: 1px solid rgba(6, 182, 212, 0.45);
+            border-radius: 8px;
+            background: rgba(8, 145, 178, 0.16);
+            color: #cffafe;
+            font-size: 12px;
+            font-weight: 700;
+            padding: 8px 11px;
+            cursor: pointer;
+            transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+        }
+        .arrange-topology-btn:hover {
+            background: rgba(8, 145, 178, 0.28);
+            border-color: rgba(34, 211, 238, 0.75);
+            color: #ecfeff;
+        }
+        .arrange-topology-btn svg {
+            width: 14px;
+            height: 14px;
+        }
         .metric-box {
             display: flex;
             align-items: center;
@@ -686,6 +709,14 @@ def get_web_ui_html():
             </div>
                 </div>
                 <div class="header-controls">
+                    <button type="button" class="arrange-topology-btn" onclick="arrangeTopology()" title="清除拖拽坐标并重新整理拓扑">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M3 6h18"/>
+                            <path d="M7 12h10"/>
+                            <path d="M10 18h4"/>
+                        </svg>
+                        <span>整理拓扑</span>
+                    </button>
                     <label class="compact-toggle" for="compact-mode-toggle">
                         <input id="compact-mode-toggle" type="checkbox" checked disabled />
                         <span class="compact-toggle-label">精简模式（调试中，已锁定）</span>
@@ -826,6 +857,7 @@ def get_web_ui_html():
         let currentSwitchDomainMap = {};
         let domainRegions = [];
         let switchManualPositions = {};
+        let lastCompactLayoutData = null;
         let routeSessions = [];
         let selectedRouteSessionId = null;
         let selectedRouteSessionSignature = null;
@@ -1021,14 +1053,22 @@ def get_web_ui_html():
             if (hasAutoFitInitialTopology || !network) return;
             hasAutoFitInitialTopology = true;
             setTimeout(() => {
-                if (!network) return;
-                network.fit({
-                    animation: {
-                        duration: 500,
-                        easingFunction: 'easeInOutQuad'
-                    }
-                });
+                fitTopologyView(500);
             }, 100);
+        }
+
+        function arrangeTopology() {
+            if (!network || !nodes || !lastCompactLayoutData) return;
+            switchManualPositions = {};
+            try {
+                localStorage.removeItem(compactPositionStorageKey);
+            } catch (err) {}
+            lastLayoutSignature = null;
+            currentSwitchDomainMap = lastCompactLayoutData.switchDomainMap || {};
+            applyCompactLayout(lastCompactLayoutData.nodes, currentSwitchDomainMap, lastCompactLayoutData.edges);
+            persistCompactPreferences();
+            applyRouteSessionHighlight();
+            fitTopologyView(550);
         }
 
         function refreshGraphMetadataCache(data) {
@@ -1267,6 +1307,16 @@ def get_web_ui_html():
             selectedRouteSessionSignature = null;
             updateRouteSessionsPanel();
             applyRouteSessionHighlight();
+        }
+
+        function fitTopologyView(duration) {
+            if (!network) return;
+            network.fit({
+                animation: {
+                    duration: duration || 450,
+                    easingFunction: 'easeInOutQuad'
+                }
+            });
         }
 
         function loadCompactPreferences() {
@@ -2287,6 +2337,11 @@ def get_web_ui_html():
                 const renderData = buildCompactGraphData(graphNodes, graphEdges);
                 const renderNodes = renderData.nodes || [];
                 const renderEdges = renderData.edges || [];
+                lastCompactLayoutData = {
+                    nodes: renderNodes,
+                    edges: renderEdges,
+                    switchDomainMap: renderData.switchDomainMap || {}
+                };
                 
                 debugLog('收到拓扑数据:', data);
                 debugLog('节点数量:', renderNodes.length);
