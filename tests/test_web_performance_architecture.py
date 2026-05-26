@@ -166,3 +166,35 @@ def test_route_session_highlight_is_visually_distinct():
     assert "shadow" in highlight_body
     assert "width: Math.max((edge.originalWidth || edge.width || 2) + 5.5, 9)" in highlight_body
     assert "dashes: [12, 4]" in highlight_body
+
+
+def test_switch_labels_use_real_dpid_not_render_order():
+    text = (ROOT / "web_ui_html.py").read_text(encoding="utf-8")
+    update_body = text[text.index("function updateNetwork"):text.index("function applyCustomLayout")]
+
+    assert "function formatSwitchLabel" in text
+    assert "label = formatSwitchLabel(nodeId)" in update_body
+    assert "label = 'SW' + nodeNumber" not in update_body
+    assert "nodeNumber = getStableNodeNumber(nodeId)" in update_body
+
+
+def test_sidebar_and_link_panels_use_same_display_identity():
+    text = (ROOT / "web_ui_html.py").read_text(encoding="utf-8")
+    node_body = text[text.index("function showNodeInfo"):text.index("function createInfoRow")]
+    edge_body = text[text.index("function showEdgeInfo"):text.index("async function loadSwitchFlowsForSidebar")]
+
+    assert "const displayLabel = getNodeDisplayLabel(node)" in node_body
+    assert "sidebarSubtitle.textContent = displayLabel" in node_body
+    assert "formatEndpointLabel(fromNode, edge.from)" in edge_body
+    assert "formatEndpointLabel(toNode, edge.to)" in edge_body
+    assert "createInfoRow('Source Switch', srcLabel)" in edge_body
+    assert "createInfoRow('Target Switch', dstLabel)" in edge_body
+
+
+def test_route_session_panel_formats_switch_path_labels():
+    text = (ROOT / "web_ui_html.py").read_text(encoding="utf-8")
+    panel_body = text[text.index("function updateRouteSessionsPanel"):text.index("function applyRouteSessionHighlight")]
+
+    assert "function formatRouteSessionPath" in text
+    assert "formatSwitchLabel" in text[text.index("function formatRouteSessionPath"):text.index("function sanitizeHtml")]
+    assert "const pathText = formatRouteSessionPath(item)" in panel_body

@@ -871,6 +871,49 @@ def get_web_ui_html():
             return String(v);
         }
 
+        function getStableNodeNumber(nodeId) {
+            const text = String(nodeId);
+            const match = text.match(/([0-9]+)$/);
+            if (!match) return text;
+            const n = Number(match[1]);
+            return Number.isFinite(n) ? n : text;
+        }
+
+        function formatSwitchLabel(nodeId) {
+            return 'SW' + String(getStableNodeNumber(nodeId));
+        }
+
+        function formatHostLabel(nodeId, nodeData) {
+            const ip = nodeData && nodeData.ip ? nodeData.ip : String(nodeId);
+            const match = String(ip).match(/([0-9]+)$/);
+            return match ? ('H' + match[1]) : String(ip);
+        }
+
+        function getNodeDisplayLabel(node) {
+            if (!node) return '';
+            if (node.nodeType === 'switch') return formatSwitchLabel(node.id);
+            if (node.nodeType === 'host') return formatHostLabel(node.id, node.nodeData || {});
+            return node.label || String(node.id);
+        }
+
+        function formatEndpointLabel(node, fallbackId) {
+            if (node) return getNodeDisplayLabel(node);
+            return formatSwitchLabel(fallbackId);
+        }
+
+        function formatRouteSessionPath(item) {
+            if (!item) return '';
+            const switchPath = Array.isArray(item.switch_path) ? item.switch_path : [];
+            if (!switchPath.length) return item.display_path || '';
+            const parts = [];
+            if (item.src_ip) parts.push('Host(' + item.src_ip + ')');
+            switchPath.forEach((switchId) => {
+                parts.push(formatSwitchLabel(switchId));
+            });
+            if (item.dst_ip) parts.push('Host(' + item.dst_ip + ')');
+            return parts.join(' -> ');
+        }
+
         function sanitizeHtml(text) {
             return String(text)
                 .replace(/&/g, '&amp;')
@@ -1080,7 +1123,7 @@ def get_web_ui_html():
 
             const html = routeSessions.map((item) => {
                 const activeClass = item.id === selectedRouteSessionId ? ' active' : '';
-                const pathText = item.display_path || (Array.isArray(item.switch_path) ? item.switch_path.join(' -> ') : '');
+                const pathText = formatRouteSessionPath(item);
                 const source = item.decision_source || item.path_source || 'unknown';
                 const modelUsed = item.model_used ? 'model' : 'fallback';
                 const reason = item.fallback_reason || '';
@@ -2273,7 +2316,8 @@ def get_web_ui_html():
                         const nodeData = nodeObj.data || {};
                         const nodeType = nodeData.node_type || 'unknown';
                         
-                        let color, size, iconType, label, nodeNumber, iconColor;
+                        let color, size, iconType, label, iconColor;
+                        let nodeNumber = getStableNodeNumber(nodeId);
                         
                         // 根据节点类型设置样式和编号（使用SDN.txt风格的颜色和图标）
                         if (nodeId === 'RootController' || nodeType === 'root_controller') {
@@ -2282,15 +2326,13 @@ def get_web_ui_html():
                             iconType = 'globe';
                             iconColor = '#f59e0b';
                             nodeTypeCounters['root_controller']++;
-                            nodeNumber = nodeTypeCounters['root_controller'];
-                            label = 'Root ' + nodeNumber;
+                            label = 'Root';
                         } else if (nodeType === 'controller') {
                             color = { background: '#1e3a8a', border: '#3b82f6', highlight: { background: '#1e40af', border: '#60a5fa' } };
                             size = 56;  // 对应w-14 h-14 (56px)
                             iconType = 'server';
                             iconColor = '#60a5fa';
                             nodeTypeCounters['controller']++;
-                            nodeNumber = nodeTypeCounters['controller'];
                             label = 'Ctrl-' + nodeNumber;
                         } else if (nodeType === 'switch') {
                             color = { background: '#164e63', border: '#06b6d4', highlight: { background: '#155e75', border: '#22d3ee' } };
@@ -2298,16 +2340,14 @@ def get_web_ui_html():
                             iconType = 'network';
                             iconColor = '#22d3ee';
                             nodeTypeCounters['switch']++;
-                            nodeNumber = nodeTypeCounters['switch'];
-                            label = 'SW' + nodeNumber;
+                            label = formatSwitchLabel(nodeId);
                         } else if (nodeType === 'host') {
                             color = { background: '#1e293b', border: '#475569', highlight: { background: '#334155', border: '#64748b' } };
                             size = 32;  // 对应w-8 h-8 (32px)
                             iconType = 'laptop';
                             iconColor = '#94a3b8';
                             nodeTypeCounters['host']++;
-                            nodeNumber = nodeTypeCounters['host'];
-                            label = 'H' + nodeNumber;
+                            label = formatHostLabel(nodeId, nodeData);
                         } else {
                             // 未知类型
                             color = { background: '#1e293b', border: '#64748b', highlight: { background: '#334155', border: '#94a3b8' } };
@@ -2315,7 +2355,6 @@ def get_web_ui_html():
                             iconType = 'laptop';
                             iconColor = '#94a3b8';
                             nodeTypeCounters['unknown']++;
-                            nodeNumber = nodeTypeCounters['unknown'];
                             label = 'Unknown' + nodeNumber;
                         }
                         
@@ -2447,7 +2486,9 @@ def get_web_ui_html():
                             dashes: dashes,
                             smooth: smooth,
                             arrows: { to: { enabled: false } },
-                            title: `${source} -- ${target}`,
+                            title: edgeType === 'switch_link'
+                                ? `${formatSwitchLabel(source)} -- ${formatSwitchLabel(target)}`
+                                : `${source} -- ${target}`,
                             data: safeEdgeData,
                             originalColor: color,
                             originalWidth: width,
@@ -2788,6 +2829,8 @@ def get_web_ui_html():
             const toNode = nodes.get(edge.to);
             const srcId = fromNode ? fromNode.id : edge.from;
             const dstId = toNode ? toNode.id : edge.to;
+            const srcLabel = formatEndpointLabel(fromNode, edge.from);
+            const dstLabel = formatEndpointLabel(toNode, edge.to);
 
             const sidebarTitle = document.getElementById('sidebar-title');
             const sidebarSubtitle = document.getElementById('sidebar-subtitle');
@@ -2795,7 +2838,7 @@ def get_web_ui_html():
             const sidebarContent = document.getElementById('sidebar-content');
 
             sidebarTitle.textContent = 'Switch Link';
-            sidebarSubtitle.textContent = String(srcId) + ' <-> ' + String(dstId);
+            sidebarSubtitle.textContent = srcLabel + ' <-> ' + dstLabel;
             sidebarIcon.className = 'sidebar-icon switch';
 
             const delayVal = edgeData.delay;
@@ -2823,8 +2866,10 @@ def get_web_ui_html():
             html += '<div class="sidebar-section">';
             html += '<h3 class="section-title">Link Endpoints</h3>';
             html += '<div class="info-card">';
-            html += createInfoRow('Source Switch', String(srcId));
-            html += createInfoRow('Target Switch', String(dstId));
+            html += createInfoRow('Source Switch', srcLabel);
+            html += createInfoRow('Target Switch', dstLabel);
+            html += createInfoRow('Source DPID', String(srcId));
+            html += createInfoRow('Target DPID', String(dstId));
             if (edgeData.src_port !== undefined) {
                 html += createInfoRow('Source Port', String(edgeData.src_port));
             }
@@ -2901,6 +2946,7 @@ def get_web_ui_html():
             const nodeData = getNodeMetadata(nodeId, node);
             const connectionCounts = nodeData.connection_counts || {};
             currentSelectedSwitchId = (nodeType === 'switch') ? node.id : null;
+            const displayLabel = getNodeDisplayLabel(node) || String(node.id);
             
             // 更新侧边栏标题
             const sidebarTitle = document.getElementById('sidebar-title');
@@ -2911,7 +2957,7 @@ def get_web_ui_html():
             // 设置图标和标题
             let iconClass = '';
             let title = '';
-            let subtitle = node.id;
+            let subtitle = displayLabel;
             
             if (nodeType === 'root_controller') {
                 iconClass = 'root';
@@ -2921,7 +2967,7 @@ def get_web_ui_html():
                 title = 'Sub Controller';
             } else if (nodeType === 'switch') {
                 iconClass = 'switch';
-                title = 'OpenFlow Switch';
+                title = displayLabel || 'OpenFlow Switch';
             } else if (nodeType === 'host') {
                 iconClass = 'host';
                 title = 'End Host';
@@ -2931,7 +2977,7 @@ def get_web_ui_html():
             }
             
             sidebarTitle.textContent = title;
-            sidebarSubtitle.textContent = subtitle;
+            sidebarSubtitle.textContent = displayLabel;
             sidebarIcon.className = 'sidebar-icon ' + iconClass;
             
             // 生成内容HTML
@@ -2952,6 +2998,7 @@ def get_web_ui_html():
                 html += createInfoRow('Node Type', 'Sub Controller');
                 html += createInfoRow('Connected Switches', (connectionCounts.switches || 0).toString());
             } else if (nodeType === 'switch') {
+                html += createInfoRow('Display Label', displayLabel || 'N/A');
                 html += createInfoRow('IP Address', nodeData.ip || node.id || 'N/A');
                 if (nodeData.gateway_ip) {
                     html += createInfoRow('Gateway IP', nodeData.gateway_ip);
