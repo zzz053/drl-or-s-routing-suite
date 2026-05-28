@@ -36,7 +36,7 @@ drl-or-s-routing-suite/
 | server_agent 控制器 socket | `6001` | Ryu 控制器连接根控 |
 | Web UI | `6009` | 浏览器访问拓扑和流表页面 |
 | DRL path_service | `8889` | server_agent 长连接调用 DRL 路径计算 |
-| Ryu 控制器 c1 | `6671` | Military domain1 |
+| Ryu 控制器 c1 | `6654` | Military domain1 |
 | Ryu 控制器 c2 | `6655` | Military domain2 |
 | Ryu 控制器 c3 | `6656` | Military domain3 |
 | Ryu 控制器 c4 | `6657` | Military domain4 |
@@ -88,11 +88,24 @@ cd drl-or-s-routing-suite
 ./start_suite.sh
 ```
 
+如果要打通 Mininet 虚拟交换机和真实 SDN 交换机，把连接真实交换机的数据面物理网卡作为参数传入，例如：
+
+```bash
+./start_suite.sh eno1
+```
+
+该模式会：
+
+- 让真实交换机仍连接 `c1` 控制器端口 `6654`。
+- 自动设置 `EXTERNAL_LINK_PORTS=1:20`，让控制器从启动时就把 `s1:port20` 当作外部/链路端口，避免误学主机。
+- 将宿主机物理网卡 `eno1` 加入 Mininet OVS `s1`，并固定 OpenFlow 端口为 `20`。
+- 退出 Mininet CLI 后恢复该物理网卡原 IP 和默认网关。
+
 该脚本会依次启动：
 
 1. DRL path_service：`127.0.0.1:8889`
 2. server_agent：socket `6001`，Web `6009`
-3. 7 个 Ryu 控制器：`6671/6655/6656/6657/6658/6659/6670`
+3. 7 个 Ryu 控制器：`6654/6655/6656/6657/6658/6659/6670`
 4. Military Mininet 拓扑：`sudo python3 testbed/creat_test_topo.py`
 
 一键脚本最后会停留在当前终端的 Mininet CLI 中。你如果在 PyCharm 的 Terminal 面板里运行 `./start_suite.sh`，Mininet CLI 就会直接显示在 PyCharm 终端中；脚本不会主动打开 Ubuntu 图形终端。退出 Mininet CLI 后，脚本会自动清理后台服务。
@@ -173,7 +186,7 @@ python3 start_controllers_test.py start -n
 期望现象：
 
 - 7 个 Ryu 控制器后台启动。
-- 控制器端口分别为 `6671/6655/6656/6657/6658/6659/6670`。
+- 控制器端口分别为 `6654/6655/6656/6657/6658/6659/6670`。
 - server_agent 日志中逐步出现控制器连接和心跳。
 
 停止控制器：
@@ -197,6 +210,31 @@ python3 start_controllers_test.py start --terminal
 ```bash
 cd drl-or-s-routing-suite
 sudo python3 testbed/creat_test_topo.py
+```
+
+如果要接入真实交换机，先确认真实交换机控制通道连接到 `6654`，再把连接真实交换机的数据面网卡传给脚本：
+
+```bash
+cd drl-or-s-routing-suite
+sudo EXTERNAL_LINK_PORTS=1:20 python3 testbed/creat_test_topo.py eno1
+```
+
+启动后重点检查：
+
+```bash
+sh ovs-vsctl get Interface eno1 ofport
+sh ovs-vsctl show
+```
+
+期望 `eno1` 的 ofport 为 `20`，并且 `s1` 仍连接 `tcp:127.0.0.1:6654` 或你的控制器实际地址。
+
+如果脚本异常退出导致宿主机网卡未恢复，可手动执行：
+
+```bash
+sudo ovs-vsctl --if-exists del-port s1 eno1
+sudo ip link set eno1 up
+sudo ip addr add <原IP/掩码> dev eno1
+sudo ip route replace default via <原网关> dev eno1
 ```
 
 该拓扑会创建：
@@ -239,6 +277,7 @@ curl http://localhost:6009/api/route_sessions
 - `/api/health` 表示服务可用。
 - `/api/statistics` 中能看到 controller、switch、host、link、DRL 状态。
 - `/api/graph` 中节点和边数量随拓扑上报增加。
+- 虚实通信模式下，真实交换机连接 `c1:6654` 并被 LLDP 发现后，会作为交换机节点和链路同步到 `/api/graph`。
 - `/api/route_sessions` 初始可以为空，产生路径后应逐步出现记录。
 
 浏览器检查：
@@ -510,7 +549,7 @@ sudo python3 testbed/creat_test_topo.py
 查看占用：
 
 ```bash
-ss -lntp | grep -E "6001|6009|8889|6655|6656|6657|6658|6659|6670|6671"
+ss -lntp | grep -E "6001|6009|8889|6654|6655|6656|6657|6658|6659|6670"
 ```
 
 停止旧进程：

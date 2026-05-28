@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """
 启动测试拓扑（creat_test_topo.py）对应的七个从控制器
-- OpenFlow 监听端口: 6671, 6655, 6656, 6657, 6658, 6659, 6670
+- OpenFlow 监听端口: 6654, 6655, 6656, 6657, 6658, 6659, 6670
 - 复用 start_controllers.py 中的 ControllerManager
 - 根控由 server_agent.py 手动启动（默认监听 6001）
 
@@ -17,7 +17,7 @@ from pathlib import Path
 from start_controllers import ControllerManager
 
 
-TEST_CONTROLLER_PORTS = [6671, 6655, 6656, 6657, 6658, 6659, 6670]
+TEST_CONTROLLER_PORTS = [6654, 6655, 6656, 6657, 6658, 6659, 6670]
 DEFAULT_USE_TERMINAL = False
 
 
@@ -89,7 +89,7 @@ def main():
     manager = build_manager(use_terminal=use_terminal)
 
     if command == 'start':
-        print('测试拓扑: 启动 7 个从控制器（6671,6655,6656,6657,6658,6659,6670）')
+        print('测试拓扑: 启动 7 个从控制器（6654,6655,6656,6657,6658,6659,6670）')
         print('请确保已先启动根控 server_agent.py\n')
         start_selected(manager, TEST_CONTROLLER_PORTS)
         try:

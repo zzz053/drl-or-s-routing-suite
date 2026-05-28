@@ -26,6 +26,14 @@ Mininet and Open vSwitch must be installed as system packages in the Linux/Minin
 
 The script starts DRL, server_agent, the Military Ryu controllers, then enters the Military Mininet CLI in the current terminal. Running it from PyCharm Terminal keeps the Mininet CLI inside PyCharm instead of opening separate Ubuntu terminal windows.
 
+For hybrid virtual/physical switch communication, pass the host NIC connected to the real SDN switch:
+
+```bash
+./start_suite.sh eno1
+```
+
+This attaches `eno1` to Mininet `s1:port20`, marks `dpid=1,port=20` as an external link port with `EXTERNAL_LINK_PORTS=1:20`, and keeps the real switch on controller `c1` / OpenFlow port `6654`.
+
 Then open:
 
 ```text
@@ -44,6 +52,12 @@ Use the Military topology:
 
 ```bash
 sudo python3 testbed/creat_test_topo.py
+```
+
+Hybrid physical attachment:
+
+```bash
+sudo EXTERNAL_LINK_PORTS=1:20 python3 testbed/creat_test_topo.py eno1
 ```
 
 ## 中文运行测试文档

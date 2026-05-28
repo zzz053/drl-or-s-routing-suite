@@ -18,7 +18,7 @@ def load_module(name, path):
 def test_test_topology_controller_ports_match_military_topology():
     module = load_module("start_controllers_test", "start_controllers_test.py")
 
-    assert module.TEST_CONTROLLER_PORTS == [6671, 6655, 6656, 6657, 6658, 6659, 6670]
+    assert module.TEST_CONTROLLER_PORTS == [6654, 6655, 6656, 6657, 6658, 6659, 6670]
 
 
 def test_test_topology_manager_defaults_to_no_external_terminal():
@@ -28,7 +28,7 @@ def test_test_topology_manager_defaults_to_no_external_terminal():
     assert manager.use_terminal is False
     assert manager.pid_file.as_posix() == "/tmp/ryu_controllers_test.pid"
     assert manager.log_dir == ROOT / "logs"
-    assert manager.controller_log_path(6671) == ROOT / "logs" / "ryu_controller_6671.log"
+    assert manager.controller_log_path(6654) == ROOT / "logs" / "ryu_controller_6654.log"
 
 
 def test_start_suite_launches_military_topology():
@@ -37,6 +37,14 @@ def test_start_suite_launches_military_topology():
     assert "python3 -u start_controllers_test.py start -n" in text
     assert "testbed/creat_test_topo.py" in text
     assert "sudo" in text
+
+
+def test_start_suite_supports_optional_external_interface():
+    text = (ROOT / "start_suite.sh").read_text(encoding="utf-8")
+
+    assert 'EXTERNAL_INTF="${1:-}"' in text
+    assert 'EXTERNAL_LINK_PORTS="${EXTERNAL_LINK_PORTS:-1:20}"' in text
+    assert 'sudo python3 testbed/creat_test_topo.py "$EXTERNAL_INTF"' in text
 
 
 def test_drl_assets_are_packaged_for_standalone_delivery():

@@ -2,12 +2,19 @@
 
 import itertools
 import random
+import sys
 import time
 
 from mininet.net import Mininet
 from mininet.node import RemoteController, OVSSwitch
 from mininet.cli import CLI
 from mininet.log import setLogLevel
+
+from hybrid_external_interface import add_hardware_interface, restore_network_config
+
+
+EXTERNAL_SWITCH = 's1'
+EXTERNAL_PORT = 20
 
 
 def staggered_pingall(net, interval=0.3, bidirectional=False, count=1, timeout=1):
@@ -59,8 +66,9 @@ def staggered_pingall(net, interval=0.3, bidirectional=False, count=1, timeout=1
     return {'total': total, 'success': success, 'failed': failed}
 
 
-def create_topology():
+def create_topology(external_intf=None):
     net = Mininet(controller=None, switch=OVSSwitch)
+    external_state = None
 
     # ==================== 域定义区 ====================
     # 域1：扩展环（不挂主机）
@@ -79,7 +87,7 @@ def create_topology():
 
     # 域控制器端口映射
     controller_specs = {
-        'c1': 6671,
+        'c1': 6654,
         'c2': 6655,
         'c3': 6656,
         'c4': 6657,
@@ -206,13 +214,28 @@ def create_topology():
         for i in switch_nums:
             switches[f's{i}'].start([ctrl])
 
-    print("=== 网络已启动，进入 CLI ===")
-    print("可在 CLI 执行：py net.staggered_pingall(interval=0.3, bidirectional=False)")
-    CLI(net)
+    if external_intf:
+        print("=== 接入真实交换机物理链路 ===")
+        print("将宿主机网卡 %s 接入 %s:port%s" % (external_intf, EXTERNAL_SWITCH, EXTERNAL_PORT))
+        external_state = add_hardware_interface(
+            external_intf,
+            switch_name=EXTERNAL_SWITCH,
+            external_port=EXTERNAL_PORT,
+        )
+        print("真实交换机接入端口已固定为 %s:port%s" % (EXTERNAL_SWITCH, EXTERNAL_PORT))
+        print("请确认真实交换机 OpenFlow 控制通道连接到 c1 端口 6654")
 
-    net.stop()
+    try:
+        print("=== 网络已启动，进入 CLI ===")
+        print("可在 CLI 执行：py net.staggered_pingall(interval=0.3, bidirectional=False)")
+        CLI(net)
+    finally:
+        if external_state:
+            print("=== 恢复宿主机物理网卡配置 ===")
+            restore_network_config(external_state)
+        net.stop()
 
 
 if __name__ == '__main__':
     setLogLevel('info')
-    create_topology()
+    create_topology(sys.argv[1] if len(sys.argv) > 1 else None)

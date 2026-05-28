@@ -12,6 +12,24 @@ Web 监听参数，以及按主机 TCP/UDP 端口区间划分任务类型的映�
 
 import os
 
+
+def _parse_external_link_ports(raw_value):
+    ports = {}
+    for item in (raw_value or "").split(","):
+        item = item.strip()
+        if not item:
+            continue
+        dpid_text, sep, port_text = item.partition(":")
+        if not sep:
+            continue
+        try:
+            dpid = int(dpid_text, 0)
+            port = int(port_text, 0)
+        except ValueError:
+            continue
+        ports.setdefault(dpid, set()).add(port)
+    return ports
+
 # 连接根控 server_agent（与 server_agent.py 中 CONTROLLER_IP/CONTROLLER_PORT 对应）
 SERVER_CONFIG = {
     'server_ip': os.environ.get('SERVER_AGENT_IP', '127.0.0.1'),
@@ -45,6 +63,10 @@ DRL_MIN_CONFIDENCE = float(os.environ.get("DRL_MIN_CONFIDENCE", "0.50"))
 ROUTE_FLOW_IDLE_TIMEOUT = int(os.environ.get("ROUTE_FLOW_IDLE_TIMEOUT", "15"))
 ROUTE_FLOW_HARD_TIMEOUT = int(os.environ.get("ROUTE_FLOW_HARD_TIMEOUT", "0"))
 FLOW_INSTALL_BARRIER_TIMEOUT = float(os.environ.get("FLOW_INSTALL_BARRIER_TIMEOUT", "0.5"))
+
+# Comma-separated OpenFlow port whitelist for physical/real-network attachments.
+# Example: EXTERNAL_LINK_PORTS=1:20 marks s1:port20 as a link/external port before LLDP learns it.
+EXTERNAL_LINK_PORTS = _parse_external_link_ports(os.environ.get("EXTERNAL_LINK_PORTS", ""))
 
 # 按主机 TCP/UDP 端口区间划分业务（闭区间）。
 # 顺序有意义：对每个包先按目的端口查表，再按源端口；未命中则使用 default。

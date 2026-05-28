@@ -26,6 +26,7 @@ from common_config import (
     ROUTE_FLOW_IDLE_TIMEOUT,
     ROUTE_FLOW_HARD_TIMEOUT,
     FLOW_INSTALL_BARRIER_TIMEOUT,
+    EXTERNAL_LINK_PORTS,
 )
 from host_model import Host
 from controller_helpers import (
@@ -124,6 +125,8 @@ class TopoAwareness(app_manager.RyuApp):
         self._recv_greenlet = None
         self._path_requested = {}
         self._pending_path_packets = {}
+
+        self._apply_configured_external_link_ports()
         # 交换机真实流表快照（来自 OFPFlowStatsReply）
         self.switch_flow_stats = {}  # {dpid: [flow_entry, ...]}
         # 已下发路径会话：用于链路断开后的相关流表删除
@@ -1112,6 +1115,14 @@ class TopoAwareness(app_manager.RyuApp):
         self.permanent_link_ports.setdefault(dpid, set()).add(port_no)
         self._purge_host_records_on_link_port(dpid, port_no)
 
+    def _apply_configured_external_link_ports(self, dpid=None):
+        """Pre-mark configured physical attachment ports as non-host link ports."""
+        for configured_dpid, ports in EXTERNAL_LINK_PORTS.items():
+            if dpid is not None and configured_dpid != dpid:
+                continue
+            for port_no in ports:
+                self._mark_permanent_link_port(configured_dpid, port_no)
+
     # 验证一个交换机和端口的组合是否存在于网络拓扑中
     def is_link_port(self, dpid, port):  # 检查指定的端口是否是交换机的链路端口
         if port in self.permanent_link_ports.get(dpid, set()):
@@ -1552,6 +1563,7 @@ class TopoAwareness(app_manager.RyuApp):
         self.switch_mac_to_port.setdefault(dpid, {})   # 如果 dpid 已经在字典中，则返回对应的值。如果不存在，则将 dpid 添加到字典中，并赋值为一个新的空字典 {}
         self.host_to_sw_port.setdefault(dpid, {})
         self.permanent_link_ports.setdefault(dpid, set())
+        self._apply_configured_external_link_ports(dpid)
         self.mac_to_port.setdefault(dpid, {})
         if dpid not in self.dpid_to_switch:
             self.dpid_to_switch[dpid] = sw.dp
@@ -1583,6 +1595,7 @@ class TopoAwareness(app_manager.RyuApp):
             self.switch_mac_to_port.setdefault(dpid, {})
             self.host_to_sw_port.setdefault(dpid, {})
             self.permanent_link_ports.setdefault(dpid, set())
+            self._apply_configured_external_link_ports(dpid)
             self.mac_to_port.setdefault(dpid, {})
             self.dpid_to_switch_ip[dpid] = sw.dp.address
             self.dpid_to_switch[dpid] = sw.dp
