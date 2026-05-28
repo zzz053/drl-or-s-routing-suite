@@ -911,7 +911,6 @@ class ServerAgent:
         if message.get('barriers_ok') is False:
             logger.warning("[Path] path install ACK reported barrier failure: path_id=%s controller=%s",
                            path_id, client_addr)
-            return
         with self.path_install_cond:
             pending = self.pending_path_installs.get(path_id)
             if not pending:

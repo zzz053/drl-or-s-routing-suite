@@ -22,6 +22,7 @@ def test_controller_auto_route_flows_have_idle_timeout():
     assert "idle_timeout = ROUTE_FLOW_IDLE_TIMEOUT" in text
     assert "'idle_timeout': int(idle_timeout)" in text
     assert 'ROUTE_FLOW_IDLE_TIMEOUT", "120"' in config_text
+    assert 'FLOW_INSTALL_BARRIER_TIMEOUT", "3.0"' in config_text
 
 
 def test_cross_domain_path_forwarding_waits_for_openflow_barriers():
@@ -46,7 +47,17 @@ def test_server_waits_when_path_install_ack_reports_barrier_failure():
 
     assert "barriers_ok" in body
     assert "path install ACK reported barrier failure" in body
-    assert "return" in body[:body.index("pending['acks'].discard")]
+    barrier_block = body[body.index("if message.get('barriers_ok')"):body.index("with self.path_install_cond")]
+    assert "return" not in barrier_block
+
+
+def test_controller_forwards_after_barrier_timeout_warning():
+    text = CONTROLLER.read_text(encoding="utf-8")
+    start = text.index("def _process_path")
+    body = text[start:text.index("def _request_path", start)]
+
+    assert "continuing after flow barrier timeout" in body
+    assert "and barriers_ok" not in body[body.index("if msg and first_hop_datapath"):body.index("pending_key")]
 
 
 def test_controller_handles_flow_removed_events_and_updates_sessions():

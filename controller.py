@@ -2410,6 +2410,11 @@ class TopoAwareness(app_manager.RyuApp):
                 # break  # 只处理本控制器的交换机
 
         barriers_ok = self._wait_for_flow_barriers(list(barrier_datapaths.values())) if barrier_datapaths else True
+        if not barriers_ok:
+            self.logger.warning(
+                "[Path] continuing after flow barrier timeout: src=%s dst=%s local_switches=%s",
+                src_ip, dst_ip, local_switches_in_path
+            )
 
         if path_id:
             self._send_to_server({
@@ -2422,14 +2427,14 @@ class TopoAwareness(app_manager.RyuApp):
                 "barriers_ok": barriers_ok,
             })
 
-        if msg and first_hop_datapath is not None and first_hop_actions is not None and barriers_ok:
+        if msg and first_hop_datapath is not None and first_hop_actions is not None:
             self.send_packet_to_outport(first_hop_datapath, msg, first_hop_in_port, first_hop_actions)
 
         pending_key = (src_ip, dst_ip)
         self._path_requested.pop(pending_key, None)
         if pending_key in self._pending_path_packets:
             queue = self._pending_path_packets.pop(pending_key)
-            if first_hop_datapath is not None and first_hop_actions is not None and barriers_ok:
+            if first_hop_datapath is not None and first_hop_actions is not None:
                 for _dp, queued_msg, _queued_in_port in queue:
                     try:
                         self.send_packet_to_outport(
@@ -2438,7 +2443,7 @@ class TopoAwareness(app_manager.RyuApp):
                         self.logger.error("[Path] forward queued packet failed: %s", exc)
                 self.logger.info("[Path] forwarded %d queued packets for %s", len(queue), pending_key)
             else:
-                self.logger.info("[Path] cleared %d queued packets for %s without local first hop or barrier",
+                self.logger.info("[Path] cleared %d queued packets for %s without local first hop",
                                  len(queue), pending_key)
 
     def _request_path(self, src_ip, dst_ip, dpid, in_port, msg, task_type='default',

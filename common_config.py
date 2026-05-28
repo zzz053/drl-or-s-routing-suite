@@ -65,7 +65,7 @@ DRL_MIN_CONFIDENCE = float(os.environ.get("DRL_MIN_CONFIDENCE", "0.50"))
 # lower this with ROUTE_FLOW_IDLE_TIMEOUT when they need faster cleanup.
 ROUTE_FLOW_IDLE_TIMEOUT = int(os.environ.get("ROUTE_FLOW_IDLE_TIMEOUT", "120"))
 ROUTE_FLOW_HARD_TIMEOUT = int(os.environ.get("ROUTE_FLOW_HARD_TIMEOUT", "0"))
-FLOW_INSTALL_BARRIER_TIMEOUT = float(os.environ.get("FLOW_INSTALL_BARRIER_TIMEOUT", "0.5"))
+FLOW_INSTALL_BARRIER_TIMEOUT = float(os.environ.get("FLOW_INSTALL_BARRIER_TIMEOUT", "3.0"))
 
 # Comma-separated OpenFlow port whitelist for physical/real-network attachments.
 # Example: EXTERNAL_LINK_PORTS=1:20 marks s1:port20 as a link/external port before LLDP learns it.
