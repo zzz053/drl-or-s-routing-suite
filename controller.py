@@ -33,6 +33,11 @@ from controller_helpers import (
     get_loop_safe_arp_flood_ports,
     l4_reverse_for_match,
 )
+from external_host_guard import (
+    is_external_host_source,
+    purge_host_records_for_source,
+    remember_external_host_source,
+)
 from packetin_lldp import handle_lldp_packet_in
 from packetin_arp import handle_switch_packet_in, handle_host_arp_packet_in
 from packetin_ip import handle_host_ip_packet_in
@@ -63,6 +68,7 @@ class TopoAwareness(app_manager.RyuApp):
         self.switch_mac_to_port = {}  # {dpid:{port1:hw_addr1,port2:hwaddr2,...},...}嵌套字典,外层键(dpid)和内层键(port1)
         self.host_to_sw_port = {}  # {dpid1:{port1:[mac, ipv4],port2:[mac,ipv4]...},...}嵌套字典
         self.remote_hosts = {}  # {ip: {'mac': ..., 'dpid': ..., 'port': ...}}，仅用于观测，不参与本地路径判断
+        self.external_host_sources = set()  # {(mac, ip)} learned from configured physical/external ports
         self.topo_inter_link = {}  # {(src.dpid, dst.dpid): (src.port_no, timestamp, delay, bw, loss)}存储交换机之间的内部链路信息.包括端口、时间戳、延迟、带宽和丢包率。
         self.topo_access_link = {}  # 存储接入链路信息（域间交换机的链路）
         # 永久链路口集合：一旦某端口曾确认连接过交换机，则永久视为链路口，不再允许学习主机
@@ -1122,6 +1128,22 @@ class TopoAwareness(app_manager.RyuApp):
                 continue
             for port_no in ports:
                 self._mark_permanent_link_port(configured_dpid, port_no)
+
+    def is_configured_external_link_port(self, dpid, port):
+        return port in EXTERNAL_LINK_PORTS.get(dpid, set())
+
+    def remember_external_host_source(self, mac, ip):
+        if not remember_external_host_source(self.external_host_sources, mac, ip):
+            return
+        removed = purge_host_records_for_source(self.host_to_sw_port, mac, ip)
+        if removed:
+            self.logger.info(
+                "清理外部链路误学习主机: mac=%s ip=%s removed=%s",
+                mac, ip, removed,
+            )
+
+    def is_external_host_source(self, mac, ip):
+        return is_external_host_source(self.external_host_sources, mac, ip)
 
     # 验证一个交换机和端口的组合是否存在于网络拓扑中
     def is_link_port(self, dpid, port):  # 检查指定的端口是否是交换机的链路端口

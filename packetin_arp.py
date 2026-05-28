@@ -69,6 +69,9 @@ def handle_switch_packet_in(app, ev):
         app.logger.info("过滤掉IP为0.0.0.0的主机: MAC=%s, 端口=%s", src_mac, in_port)
         return
 
+    if app.is_configured_external_link_port(dpid, in_port):
+        app.remember_external_host_source(src_mac, src_ip)
+
     # 去重：同一交换机、同一源/目的 IP、同一源 MAC、同一 ARP opcode 在 TTL 内只处理一次
     if eth.ethertype == ether_types.ETH_TYPE_ARP:
         opcode = getattr(pkt, 'opcode', None)
@@ -177,6 +180,13 @@ def handle_host_arp_packet_in(app, ev):
             return
 
         if app.is_link_port(dpid, in_port):
+            return
+
+        if app.is_external_host_source(src_mac, src_ip):
+            app.logger.info(
+                "忽略外部链路来源主机学习: MAC=%s, IP=%s, dpid=%s, in_port=%s",
+                src_mac, src_ip, dpid, in_port,
+            )
             return
 
         for link in app.topo_access_link.keys():

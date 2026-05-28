@@ -15,6 +15,13 @@ from ryu.topology.switches import LLDPPacket
 from ryu.base.app_manager import lookup_service_brick
 
 
+def parse_lldp_source(data):
+    parsed = LLDPPacket.lldp_parse(data)
+    if len(parsed) < 2:
+        raise LLDPPacket.LLDPUnknownFormat()
+    return parsed[0], parsed[1]
+
+
 def handle_lldp_packet_in(app, ev):
     """
     LLDP PacketIn 处理：
@@ -35,7 +42,7 @@ def handle_lldp_packet_in(app, ev):
 
         if eth.ethertype == ether_types.ETH_TYPE_LLDP:
             try:
-                src_dpid, src_port_no = LLDPPacket.lldp_parse(msg.data)
+                src_dpid, src_port_no = parse_lldp_source(msg.data)
                 dst_dpid = dpid
                 dst_inport = port
 
