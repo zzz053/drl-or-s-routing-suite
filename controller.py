@@ -551,7 +551,10 @@ class TopoAwareness(app_manager.RyuApp):
         key = (msg.datapath.id, msg.xid)
         waiter = self._barrier_events.pop(key, None)
         if waiter is not None:
-            waiter.send(True)
+            if hasattr(waiter, 'send'):
+                waiter.send(True)
+            else:
+                waiter.set()
 
     @set_ev_cls(ofp_event.EventOFPFlowRemoved, MAIN_DISPATCHER)
     def _flow_removed_handler(self, ev):
@@ -2317,6 +2320,7 @@ class TopoAwareness(app_manager.RyuApp):
         hop_ports = hop_ports or {}
         flow_priority = self._get_flow_priority_for_task(task_type)
         l4_rev = l4_reverse_for_match(l4_fwd)
+        src_mac_addr = self.get_mac_by_ip(src_ip) or src_mac
         local_switches_in_path = 0
         skipped_switches = 0
         barrier_datapaths = {}

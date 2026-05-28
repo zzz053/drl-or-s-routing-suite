@@ -40,6 +40,15 @@ def test_cross_domain_path_forwarding_waits_for_openflow_barriers():
     assert barrier_pos < ack_pos < forward_pos
 
 
+def test_barrier_reply_handler_supports_available_event_api():
+    text = CONTROLLER.read_text(encoding="utf-8")
+    start = text.index("def _barrier_reply_handler")
+    body = text[start:text.index("@set_ev_cls(ofp_event.EventOFPFlowRemoved", start)]
+
+    assert "hasattr(waiter, 'send')" in body
+    assert "waiter.set()" in body
+
+
 def test_server_waits_when_path_install_ack_reports_barrier_failure():
     text = (ROOT / "server_agent.py").read_text(encoding="utf-8")
     start = text.index("def handle_path_install_ack")
@@ -56,6 +65,7 @@ def test_controller_forwards_after_barrier_timeout_warning():
     start = text.index("def _process_path")
     body = text[start:text.index("def _request_path", start)]
 
+    assert "src_mac_addr = self.get_mac_by_ip(src_ip) or src_mac" in body
     assert "continuing after flow barrier timeout" in body
     assert "and barriers_ok" not in body[body.index("if msg and first_hop_datapath"):body.index("pending_key")]
 
