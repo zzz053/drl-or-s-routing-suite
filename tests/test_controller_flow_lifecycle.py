@@ -22,7 +22,7 @@ def test_controller_auto_route_flows_have_idle_timeout():
     assert "idle_timeout = ROUTE_FLOW_IDLE_TIMEOUT" in text
     assert "'idle_timeout': int(idle_timeout)" in text
     assert 'ROUTE_FLOW_IDLE_TIMEOUT", "120"' in config_text
-    assert 'FLOW_INSTALL_BARRIER_TIMEOUT", "3.0"' in config_text
+    assert 'FLOW_INSTALL_BARRIER_TIMEOUT", "0.5"' in config_text
 
 
 def test_cross_domain_path_forwarding_waits_for_openflow_barriers():
