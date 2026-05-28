@@ -34,9 +34,18 @@ def test_test_topology_manager_defaults_to_no_external_terminal():
 def test_start_suite_launches_military_topology():
     text = (ROOT / "start_suite.sh").read_text(encoding="utf-8")
 
-    assert "python3 -u start_controllers_test.py start -n" in text
+    assert '"$PYTHON_BIN" -u start_controllers_test.py start -n' in text
     assert "testbed/creat_test_topo.py" in text
     assert "sudo" in text
+
+
+def test_start_suite_allows_runtime_python_and_route_mode_overrides():
+    text = (ROOT / "start_suite.sh").read_text(encoding="utf-8")
+
+    assert 'PYTHON_BIN="${PYTHON_BIN:-python3}"' in text
+    assert 'SERVER_AGENT_ROUTE_MODE="${SERVER_AGENT_ROUTE_MODE:-hybrid}"' in text
+    assert '"$PATH_SERVICE_PYTHON" drl-or-s/path_service.py' in text
+    assert '"$PYTHON_BIN" server_agent.py "$SERVER_AGENT_ROUTE_MODE"' in text
 
 
 def test_start_suite_supports_optional_external_interface():
@@ -44,7 +53,7 @@ def test_start_suite_supports_optional_external_interface():
 
     assert 'EXTERNAL_INTF="${1:-}"' in text
     assert 'EXTERNAL_LINK_PORTS="${EXTERNAL_LINK_PORTS:-1:20}"' in text
-    assert 'sudo python3 testbed/creat_test_topo.py "$EXTERNAL_INTF"' in text
+    assert 'sudo "$PYTHON_BIN" testbed/creat_test_topo.py "$EXTERNAL_INTF"' in text
 
 
 def test_drl_assets_are_packaged_for_standalone_delivery():

@@ -34,6 +34,12 @@ For hybrid virtual/physical switch communication, pass the host NIC connected to
 
 This attaches `eno1` to Mininet `s1:port20`, marks `dpid=1,port=20` as an external link port with `EXTERNAL_LINK_PORTS=1:20`, and keeps the real switch on controller `c1` / OpenFlow port `6654`.
 
+By default, `start_suite.sh` runs `server_agent.py` in `hybrid` mode and uses `$HOME/miniconda3/envs/ryu_drl_s/bin/python` for `path_service.py` when that environment exists. You can override these choices with environment variables:
+
+```bash
+PATH_SERVICE_PYTHON=/path/to/python SERVER_AGENT_ROUTE_MODE=shadow ./start_suite.sh eno1
+```
+
 Then open:
 
 ```text
