@@ -15,11 +15,13 @@ def test_controller_requests_flow_removed_notifications():
 
 def test_controller_auto_route_flows_have_idle_timeout():
     text = CONTROLLER.read_text(encoding="utf-8")
+    config_text = (ROOT / "common_config.py").read_text(encoding="utf-8")
 
     assert "ROUTE_FLOW_IDLE_TIMEOUT" in text
     assert "idle_timeout=None" in text
     assert "idle_timeout = ROUTE_FLOW_IDLE_TIMEOUT" in text
     assert "'idle_timeout': int(idle_timeout)" in text
+    assert 'ROUTE_FLOW_IDLE_TIMEOUT", "120"' in config_text
 
 
 def test_cross_domain_path_forwarding_waits_for_openflow_barriers():

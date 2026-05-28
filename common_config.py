@@ -60,7 +60,10 @@ DRL_MIN_CONFIDENCE = float(os.environ.get("DRL_MIN_CONFIDENCE", "0.50"))
 # Controller-installed route flows expire after traffic stops, so flow_removed can
 # clear controller/server/Web state. Manual Web flows still honor their explicit
 # idle_timeout/hard_timeout values.
-ROUTE_FLOW_IDLE_TIMEOUT = int(os.environ.get("ROUTE_FLOW_IDLE_TIMEOUT", "15"))
+# Keep automatically installed route flows long enough for hybrid real/virtual
+# experiments to stay warm between short validation runs. Operators can still
+# lower this with ROUTE_FLOW_IDLE_TIMEOUT when they need faster cleanup.
+ROUTE_FLOW_IDLE_TIMEOUT = int(os.environ.get("ROUTE_FLOW_IDLE_TIMEOUT", "120"))
 ROUTE_FLOW_HARD_TIMEOUT = int(os.environ.get("ROUTE_FLOW_HARD_TIMEOUT", "0"))
 FLOW_INSTALL_BARRIER_TIMEOUT = float(os.environ.get("FLOW_INSTALL_BARRIER_TIMEOUT", "0.5"))
 
