@@ -15,6 +15,8 @@ from datetime import datetime
 
 from flask import jsonify, make_response, request
 
+from tools.acceptance_web_status import build_acceptance_status
+
 
 logger = logging.getLogger("server_agent")
 
@@ -125,6 +127,13 @@ def register_web_api_routes(app, get_server_agent):
             'graph_nodes': len(server_agent.G.nodes()),
             'graph_edges': len(server_agent.G.edges())
         })
+
+    @app.route('/api/acceptance/status', methods=['GET'])
+    def get_acceptance_status():
+        server_agent = get_server_agent()
+        if server_agent is None:
+            return jsonify({'status': 'unknown', 'issues': ['Server not initialized']}), 503
+        return jsonify(build_acceptance_status(server_agent))
 
     @app.route('/api/topo', methods=['GET'])
     def get_topo():
