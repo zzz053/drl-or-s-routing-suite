@@ -1,36 +1,36 @@
-# Acceptance P0 Design
+# 验收 P0 功能设计
 
-## Purpose
+## 目标
 
-Build the minimum acceptance-ready operating layer for this project so a Linux VM can be copied into a restricted customer environment, connected to the real SDN switch network, started with one command, checked with one command, and documented with one generated report.
+本设计的目标是为当前项目补齐最低限度的验收运行能力，使一台 Linux 虚拟机被拷贝到验收单位的封闭系统后，可以连接真实 SDN 交换机网络，并通过固定命令完成启动、检查和报告生成。
 
-The scope is intentionally limited to the P0 acceptance requirements:
+P0 范围只覆盖验收必需能力：
 
-- One-command start, stop, health check, and report generation.
-- VM deployment instructions.
-- Static hybrid boundary configuration.
-- Automatic Markdown acceptance report generation.
-- Web homepage indication of hybrid communication readiness.
+- 一键启动、停止、健康检查、报告生成。
+- VM 部署说明。
+- 静态虚实边界配置。
+- 自动生成 Markdown 验收报告。
+- Web 首页展示虚实通信就绪状态。
 
-This design does not attempt to make the project a full SDN product, replace the existing Ryu/Mininet architecture, or implement new DRL routing behavior.
+本设计不尝试把项目改造成完整 SDN 产品，不替换现有 Ryu/Mininet 架构，也不改变 DRL 路径选择模型。
 
-## Operating Assumptions
+## 运行假设
 
-- The acceptance VM is Linux.
-- The operator is allowed to use `sudo` inside the VM.
-- The real switch network can be physically connected to a VM-visible NIC.
-- Cross-VM-boundary LLDP cannot be assumed to work.
-- The virtual/real boundary link must therefore be statically configured.
-- The existing project remains centered on:
+- 验收环境是一台 Linux VM。
+- 操作人员允许在 VM 内使用 `sudo`。
+- 真实交换机网络可以通过 VM 可见网卡接入。
+- 不能假设跨 VM 边界的 LLDP 一定可用。
+- 因此虚实边界链路必须支持静态配置。
+- 项目现有核心组件保持不变：
   - `server_agent.py`
   - `drl-or-s/path_service.py`
   - `start_controllers_test.py`
   - `testbed/creat_test_topo.py`
-  - Flask Web UI on port `6009`
+  - Flask Web UI，端口 `6009`
 
-## Recommended Approach
+## 推荐方案
 
-Use a shell-based acceptance entrypoint with Python helper tools:
+新增一个 Shell 验收入口脚本，并配合 Python 辅助工具：
 
 ```bash
 ./acceptance.sh start
@@ -39,19 +39,25 @@ Use a shell-based acceptance entrypoint with Python helper tools:
 ./acceptance.sh report
 ```
 
-The entrypoint is a Bash script because Mininet, OVS, process management, and sudo boundary operations are already shell-oriented in this project. Python helpers handle structured configuration, health evaluation, and Markdown report generation.
+入口脚本使用 Bash，因为 Mininet、OVS、进程管理和 sudo 边界操作本身更适合 shell。配置解析、健康检查和报告生成由 Python 工具完成。
 
-The operator should run `./acceptance.sh start` as a normal user. The script uses `sudo` only for Mininet/OVS operations that require root privileges. `server_agent`, `path_service`, and Ryu controllers run as the normal project user to avoid root-owned logs, pid files, and Python environment problems.
+操作人员应以普通用户身份运行：
 
-## Configuration
+```bash
+./acceptance.sh start
+```
 
-Add a standard-library-friendly JSON config:
+脚本只在 Mininet/OVS 操作处调用 `sudo`。`server_agent`、`path_service` 和 Ryu 控制器均以普通项目用户运行，避免出现 root 拥有的日志、pid 文件和 Python 环境问题。
+
+## 配置文件
+
+新增标准库可解析的 JSON 配置文件：
 
 ```text
 config/hybrid_acceptance.json
 ```
 
-Initial structure:
+初始结构如下：
 
 ```json
 {
@@ -77,177 +83,177 @@ Initial structure:
 }
 ```
 
-JSON is preferred over YAML because the Python standard library can parse it without adding dependencies. This matters in a sealed acceptance VM.
+选择 JSON 而不是 YAML 的原因是：Python 标准库可以直接解析 JSON，不需要额外安装 PyYAML。验收 VM 处于封闭环境时，少一个依赖就少一个失败点。
 
-The config maps to existing runtime environment variables:
+该配置会映射为现有运行环境变量：
 
 - `EXTERNAL_LINK_PORTS=1:20`
 - `HYBRID_GATEWAY_IP=10.0.0.254`
 - `HYBRID_GATEWAY_MAC=02:00:00:00:fe:01`
 - `HYBRID_REAL_ROUTES=192.168.103.0/24`
 
-## Entrypoint Behavior
+## 验收入口脚本行为
 
 ### `./acceptance.sh start`
 
-Responsibilities:
+职责：
 
-1. Load `config/hybrid_acceptance.json`.
-2. Validate required files and tools exist.
-3. Validate the configured external interface exists.
-4. Export runtime environment variables from the config.
-5. Start `path_service` with `nohup setsid`.
-6. Start `server_agent.py hybrid` with `nohup setsid`.
-7. Start seven Ryu controllers with `start_controllers_test.py start -n`.
-8. Start Mininet in background with the configured external interface.
-9. Write pid files under `logs/`.
-10. Print the exact commands for health and report generation.
+1. 读取 `config/hybrid_acceptance.json`。
+2. 检查必需文件和工具是否存在。
+3. 检查配置的外部网卡是否存在。
+4. 根据配置导出运行环境变量。
+5. 使用 `nohup setsid` 启动 `path_service`。
+6. 使用 `nohup setsid` 启动 `server_agent.py hybrid`。
+7. 通过 `start_controllers_test.py start -n` 启动 7 个 Ryu 控制器。
+8. 使用配置的外部网卡后台启动 Mininet 拓扑。
+9. 在 `logs/` 下写入 pid 文件。
+10. 打印后续健康检查和报告生成命令。
 
-The Mininet background process should follow the already validated pattern:
+Mininet 后台启动采用已验证过的方式：
 
 ```bash
 tail -f /dev/null | sudo -E python3 -u testbed/creat_test_topo.py "$EXTERNAL_INTF"
 ```
 
-The `-E` is needed so sudo preserves `EXTERNAL_LINK_PORTS`, `HYBRID_GATEWAY_IP`, and `HYBRID_REAL_ROUTES` for topology startup.
+这里使用 `sudo -E`，是为了让 `EXTERNAL_LINK_PORTS`、`HYBRID_GATEWAY_IP`、`HYBRID_REAL_ROUTES` 等环境变量在 sudo 后仍然传递给拓扑脚本。
 
 ### `./acceptance.sh stop`
 
-Responsibilities:
+职责：
 
-1. Stop Ryu controllers through `start_controllers_test.py stop`.
-2. Kill pid-file-managed background processes.
-3. Run `sudo mn -c` to clean Mininet/OVS residue.
-4. Leave source files, config, reports, and committed code untouched.
+1. 通过 `start_controllers_test.py stop` 停止 Ryu 控制器。
+2. 根据 pid 文件停止后台进程。
+3. 执行 `sudo mn -c` 清理 Mininet/OVS 残留。
+4. 不修改源代码、配置、报告和 Git 提交。
 
-Stop must be idempotent. Running it multiple times should not fail the acceptance environment.
+`stop` 必须是幂等的。多次运行不应破坏验收环境。
 
 ### `./acceptance.sh health`
 
-Responsibilities:
+职责：
 
-1. Run the Python health checker.
-2. Print a human-readable Chinese summary.
-3. Exit non-zero only when control-plane requirements fail.
+1. 运行 Python 健康检查工具。
+2. 输出中文可读摘要。
+3. 只有控制面关键要求失败时才返回失败码。
 
-Health checks are split into two levels:
+健康检查分为两级。
 
-Control-plane checks:
+控制面检查：
 
-- `server_agent` port `6001` is listening.
-- Web port `6009` is listening.
-- `path_service` port `8889` is listening.
-- Ryu ports `6654,6655,6656,6657,6658,6659,6670` are listening.
-- Forbidden port `6671` is not listening.
-- `/api/health` responds.
-- `/api/statistics` responds.
-- `/api/acceptance/status` responds.
-- Recent logs contain no new severe errors such as `Traceback`, `AttributeError`, `root_disconnected`, `local variable`, or barrier handler exceptions.
+- `server_agent` 端口 `6001` 正在监听。
+- Web 端口 `6009` 正在监听。
+- `path_service` 端口 `8889` 正在监听。
+- Ryu 端口 `6654,6655,6656,6657,6658,6659,6670` 正在监听。
+- 禁用端口 `6671` 未监听。
+- `/api/health` 可访问。
+- `/api/statistics` 可访问。
+- `/api/acceptance/status` 可访问。
+- 最近日志中没有新的严重错误，例如 `Traceback`、`AttributeError`、`root_disconnected`、`local variable`、Barrier handler 异常等。
 
-Data-plane checks:
+数据面检查：
 
-- The configured Mininet host namespace exists, for example `h28`.
-- The configured route exists, for example `192.168.103.0/24 via 10.0.0.254`.
-- Warmup ping from `h28` to `192.168.103.3` runs.
-- Verification ping from `h28` to `192.168.103.3` runs.
-- OVS flow checks confirm `s28` and `s1` contain `idle_timeout=120` flows for `10.0.0.28 <-> 192.168.103.3`.
+- 配置的 Mininet 主机 namespace 存在，例如 `h28`。
+- 配置的真实网段路由存在，例如 `192.168.103.0/24 via 10.0.0.254`。
+- 从 `h28` 到 `192.168.103.3` 执行 warmup ping。
+- 从 `h28` 到 `192.168.103.3` 执行 verification ping。
+- 检查 `s28` 和 `s1` 上是否存在 `10.0.0.28 <-> 192.168.103.3` 的 `idle_timeout=120` 双向流表。
 
-If data-plane checks cannot run because Mininet is not active or sudo is unavailable, the result is `risk`, not an immediate `fail`, as long as the control plane is healthy.
+如果因为 Mininet 未运行或 sudo 不可用导致数据面检查无法执行，只要控制面正常，整体状态应标记为 `有风险`，而不是直接标记为 `失败`。
 
 ### `./acceptance.sh report`
 
-Responsibilities:
+职责：
 
-1. Run the same health checks as `health`.
-2. Generate a Markdown report under:
+1. 执行与 `health` 相同的检查。
+2. 在 `reports/` 下生成 Markdown 报告：
 
 ```text
 reports/acceptance-report-YYYYMMDD-HHMMSS.md
 ```
 
-3. Print the report path.
+3. 打印报告路径。
 
-The report must include:
+报告必须包含：
 
-- Config summary.
-- Service port status.
-- Controller status.
-- Web API status.
-- Hybrid boundary status.
-- h28 route output.
-- Warmup ping result.
-- Verification ping result.
-- s28/s1 flow snippets.
-- Recent severe log lines.
-- Final conclusion: `通过`, `有风险`, or `失败`.
+- 配置摘要。
+- 服务端口状态。
+- 控制器状态。
+- Web API 状态。
+- 虚实边界状态。
+- h28 路由输出。
+- warmup ping 结果。
+- verification ping 结果。
+- `s28/s1` 流表摘要。
+- 最近严重日志。
+- 最终结论：`通过`、`有风险` 或 `失败`。
 
-## Python Helper Modules
+## Python 辅助模块
 
 ### `tools/acceptance_config.py`
 
-Responsibilities:
+职责：
 
-- Load JSON config.
-- Validate required sections.
-- Convert `external_link_ports` to `EXTERNAL_LINK_PORTS` string.
-- Convert `real_routes` to `HYBRID_REAL_ROUTES` string.
-- Provide defaults only when safe:
+- 加载 JSON 配置。
+- 校验必需配置段。
+- 将 `external_link_ports` 转换为 `EXTERNAL_LINK_PORTS` 字符串。
+- 将 `real_routes` 转换为 `HYBRID_REAL_ROUTES` 字符串。
+- 只对安全项提供默认值：
   - `controllers.ports`
   - `controllers.forbidden_ports`
   - `hybrid.gateway_ip`
   - `hybrid.gateway_mac`
 
-It must not silently guess `external_interface` or `real_host_ip`.
+该模块不能静默猜测 `external_interface` 或 `real_host_ip`。
 
 ### `tools/acceptance_health.py`
 
-Responsibilities:
+职责：
 
-- Read the config.
-- Run local checks.
-- Optionally run Mininet/OVS checks when available.
-- Return structured JSON for scripts.
-- Print a concise Chinese summary by default.
+- 读取配置。
+- 执行本地控制面检查。
+- 在可用时执行 Mininet/OVS 数据面检查。
+- 支持结构化 JSON 输出。
+- 默认输出简短中文摘要。
 
-Proposed CLI:
+建议 CLI：
 
 ```bash
 python3 tools/acceptance_health.py --config config/hybrid_acceptance.json
 python3 tools/acceptance_health.py --config config/hybrid_acceptance.json --json
 ```
 
-Exit codes:
+退出码：
 
-- `0`: pass
-- `1`: fail
-- `2`: risk
+- `0`：通过
+- `1`：失败
+- `2`：有风险
 
 ### `tools/generate_acceptance_report.py`
 
-Responsibilities:
+职责：
 
-- Call the health checker programmatically.
-- Render a Markdown report.
-- Save it under `reports/`.
-- Return the report path.
+- 以程序方式调用健康检查逻辑。
+- 渲染 Markdown 报告。
+- 保存到 `reports/`。
+- 返回报告路径。
 
-Proposed CLI:
+建议 CLI：
 
 ```bash
 python3 tools/generate_acceptance_report.py --config config/hybrid_acceptance.json
 ```
 
-## Web Acceptance Status
+## Web 验收状态
 
-Add:
+新增 API：
 
 ```text
 GET /api/acceptance/status
 ```
 
-The endpoint must not execute ping or sudo operations. It reports control-plane readiness and recent route-session evidence.
+该接口不能执行 ping，也不能执行 sudo。它只报告控制面就绪情况和最近 route session 证据。
 
-Example response:
+示例响应：
 
 ```json
 {
@@ -268,14 +274,14 @@ Example response:
 }
 ```
 
-Status values:
+状态值：
 
-- `ready`: control plane is ready and a matching recent route session exists.
-- `partial`: control plane is ready but no matching route session exists.
-- `not_ready`: controllers, DRL service, or graph state is incomplete.
-- `unknown`: config cannot be loaded.
+- `ready`：控制面就绪，并且存在匹配的最近 route session。
+- `partial`：控制面就绪，但还没有匹配的 route session。
+- `not_ready`：控制器、DRL 服务或图状态不完整。
+- `unknown`：配置无法加载。
 
-The Web homepage should add a small acceptance status card near the top:
+Web 首页顶部新增一张验收状态卡片：
 
 ```text
 虚实通信状态：ready / partial / not_ready / unknown
@@ -286,99 +292,99 @@ DRL服务：已连接/未连接
 最近路径：10.0.0.28 -> 192.168.103.3
 ```
 
-The card must clearly label itself as “控制面/最近路径状态”, not as a live ping result.
+该卡片必须明确标注为“控制面/最近路径状态”，不能宣称这是实时 ping 结果。
 
-## VM Deployment Documentation
+## VM 部署文档
 
-Add:
+新增：
 
 ```text
 docs/vm-acceptance-deployment.md
 ```
 
-Required sections:
+必须包含以下部分：
 
-1. VM copy and first boot.
-2. Required Linux packages and Python environment.
-3. Network adapter mode and interface naming.
-4. Real switch cabling.
-5. Editing `config/hybrid_acceptance.json`.
-6. Starting the system.
-7. Running health check.
-8. Generating report.
-9. Troubleshooting:
-   - wrong NIC name
-   - missing sudo permission
-   - `6671` unexpectedly listening
-   - missing Ryu port
-   - no route session
-   - first ping fails but second ping passes
-   - LLDP across VM boundary not working
+1. VM 拷贝和首次启动。
+2. 必需 Linux 包和 Python 环境。
+3. 网卡模式和接口命名。
+4. 真实交换机接线方式。
+5. 如何编辑 `config/hybrid_acceptance.json`。
+6. 如何启动系统。
+7. 如何运行健康检查。
+8. 如何生成报告。
+9. 常见故障处理：
+   - 网卡名错误。
+   - sudo 权限缺失。
+   - `6671` 异常监听。
+   - Ryu 端口缺失。
+   - 没有 route session。
+   - 第一次 ping 失败但第二次 ping 通过。
+   - 跨 VM 边界 LLDP 不工作。
 
-## Error Handling
+## 错误处理要求
 
-The acceptance tools should produce actionable failures:
+验收工具必须输出可执行的错误信息：
 
-- Missing config file: print exact path and expected command.
-- Invalid JSON: print line/column from `json.JSONDecodeError`.
-- Missing external interface: print current `ip link` interface names.
-- Port missing: list expected and actual listening ports.
-- Forbidden port listening: mark fail and show process when available.
-- Web API unavailable: show URL and curl failure.
-- Data-plane check unavailable: mark risk and explain whether Mininet or sudo was missing.
-- Ping failed: include warmup and verification outputs.
-- Flow check failed: show actual `ovs-ofctl dump-flows` snippets when available.
+- 配置文件缺失：打印准确路径和期望命令。
+- JSON 格式错误：打印 `json.JSONDecodeError` 的行列信息。
+- 外部网卡不存在：打印当前 `ip link` 中可见的网卡名。
+- 端口缺失：列出期望监听端口和实际监听端口。
+- 禁用端口正在监听：标记失败，并尽量显示对应进程。
+- Web API 不可访问：显示 URL 和请求失败原因。
+- 数据面检查不可用：标记有风险，并说明是 Mininet 未运行还是 sudo 不可用。
+- ping 失败：包含 warmup 和 verification 两轮输出。
+- 流表检查失败：尽量附带实际 `ovs-ofctl dump-flows` 摘要。
 
-## Testing Strategy
+## 测试策略
 
-Use test-first implementation.
+实现时采用测试先行。
 
-Tests should cover:
+测试应覆盖：
 
-- Config parsing and validation.
-- `EXTERNAL_LINK_PORTS` formatting.
-- `HYBRID_REAL_ROUTES` formatting.
-- Health status classification:
-  - all checks pass
-  - control-plane fail
-  - data-plane unavailable
-  - forbidden port listening
-- Report rendering includes required sections.
-- `acceptance.sh` contains required command cases and uses config-driven environment variables.
-- Web API exposes `/api/acceptance/status`.
-- Web UI includes the acceptance status card and does not claim live ping status.
+- 配置解析和校验。
+- `EXTERNAL_LINK_PORTS` 格式化。
+- `HYBRID_REAL_ROUTES` 格式化。
+- 健康状态分类：
+  - 全部通过。
+  - 控制面失败。
+  - 数据面不可用。
+  - 禁用端口正在监听。
+- 报告渲染包含必需章节。
+- `acceptance.sh` 包含必需命令分支，并使用配置驱动的环境变量。
+- Web API 暴露 `/api/acceptance/status`。
+- Web UI 包含验收状态卡片，并且不宣称实时 ping 状态。
 
-Runtime integration with real Mininet/OVS should be verified manually because it requires root and the lab network. The automated tests should mock command outputs or test pure parsing/classification logic.
+涉及真实 Mininet/OVS/root 权限的集成验证需要手工执行。自动化测试应优先测试纯解析、分类和渲染逻辑，或使用命令输出样例进行测试。
 
-## Scope Boundaries
+## 范围边界
 
-Included in P0:
+P0 包含：
 
-- Local VM acceptance flow.
-- Static hybrid boundary config.
-- Local health/report tooling.
-- Web control-plane status card.
-- Documentation.
+- 本地 VM 验收流程。
+- 静态虚实边界配置。
+- 本地健康检查和报告工具。
+- Web 控制面状态卡片。
+- 部署文档。
 
-Excluded from P0:
+P0 不包含：
 
-- SSH into real switches.
-- Automatic real switch configuration.
-- Full YAML support.
-- Full Python CLI replacing shell.
-- DRL model behavior changes.
-- Browser-driven topology redesign.
-- Multi-tenant or production deployment hardening.
+- SSH 登录真实交换机。
+- 自动配置真实交换机。
+- YAML 支持。
+- 用完整 Python CLI 替换 shell。
+- DRL 模型行为改造。
+- Web 拓扑大改版。
+- 多租户或生产级部署加固。
 
-## Success Criteria
+## 成功标准
 
-The P0 work is complete when:
+P0 完成标准：
 
-1. A fresh operator can edit `config/hybrid_acceptance.json`.
-2. `./acceptance.sh start` starts the acceptance environment.
-3. `./acceptance.sh health` reports pass/risk/fail with actionable messages.
-4. `./acceptance.sh report` generates a Markdown report under `reports/`.
-5. Web UI shows a hybrid acceptance status card.
-6. `./acceptance.sh stop` cleans up the running environment.
-7. Core tests and syntax checks pass.
-8. The tools do not depend on non-standard Python packages beyond the project’s existing runtime.
+1. 操作人员可以编辑 `config/hybrid_acceptance.json`。
+2. `./acceptance.sh start` 可以启动验收环境。
+3. `./acceptance.sh health` 可以输出 `通过`、`有风险` 或 `失败`，并提供可执行问题说明。
+4. `./acceptance.sh report` 可以在 `reports/` 下生成 Markdown 报告。
+5. Web UI 可以展示虚实验收状态卡片。
+6. `./acceptance.sh stop` 可以清理运行环境。
+7. 核心测试和语法检查通过。
+8. 工具不依赖项目现有运行环境之外的额外 Python 包。
