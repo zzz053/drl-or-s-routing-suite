@@ -67,6 +67,11 @@ FLOW_INSTALL_BARRIER_TIMEOUT = float(os.environ.get("FLOW_INSTALL_BARRIER_TIMEOU
 # Comma-separated OpenFlow port whitelist for physical/real-network attachments.
 # Example: EXTERNAL_LINK_PORTS=1:20 marks s1:port20 as a link/external port before LLDP learns it.
 EXTERNAL_LINK_PORTS = _parse_external_link_ports(os.environ.get("EXTERNAL_LINK_PORTS", ""))
+EXTERNAL_ARP_ALLOWED_PREFIXES = [
+    item.strip()
+    for item in os.environ.get("EXTERNAL_ARP_ALLOWED_PREFIXES", "10.0.0.0/24").split(",")
+    if item.strip()
+]
 
 # 按主机 TCP/UDP 端口区间划分业务（闭区间）。
 # 顺序有意义：对每个包先按目的端口查表，再按源端口；未命中则使用 default。

@@ -1,3 +1,6 @@
+import ipaddress
+
+
 def _normalize_mac(mac):
     return (mac or "").strip().lower()
 
@@ -45,3 +48,20 @@ def purge_host_records_for_source(host_to_sw_port, mac, ip):
             host_to_sw_port.pop(dpid, None)
 
     return removed
+
+
+def should_drop_external_arp(src_ip, dst_ip, allowed_prefixes):
+    if _normalize_ip(src_ip) == "0.0.0.0":
+        return True
+    try:
+        dst_address = ipaddress.ip_address(_normalize_ip(dst_ip))
+    except ValueError:
+        return True
+
+    for prefix in allowed_prefixes:
+        try:
+            if dst_address in ipaddress.ip_network(prefix, strict=False):
+                return False
+        except ValueError:
+            continue
+    return True

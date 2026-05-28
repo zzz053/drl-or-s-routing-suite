@@ -27,6 +27,7 @@ from common_config import (
     ROUTE_FLOW_HARD_TIMEOUT,
     FLOW_INSTALL_BARRIER_TIMEOUT,
     EXTERNAL_LINK_PORTS,
+    EXTERNAL_ARP_ALLOWED_PREFIXES,
 )
 from host_model import Host
 from controller_helpers import (
@@ -37,6 +38,7 @@ from external_host_guard import (
     is_external_host_source,
     purge_host_records_for_source,
     remember_external_host_source,
+    should_drop_external_arp,
 )
 from packetin_lldp import handle_lldp_packet_in
 from packetin_arp import handle_switch_packet_in, handle_host_arp_packet_in
@@ -1144,6 +1146,9 @@ class TopoAwareness(app_manager.RyuApp):
 
     def is_external_host_source(self, mac, ip):
         return is_external_host_source(self.external_host_sources, mac, ip)
+
+    def should_drop_external_arp(self, src_ip, dst_ip):
+        return should_drop_external_arp(src_ip, dst_ip, EXTERNAL_ARP_ALLOWED_PREFIXES)
 
     # 验证一个交换机和端口的组合是否存在于网络拓扑中
     def is_link_port(self, dpid, port):  # 检查指定的端口是否是交换机的链路端口

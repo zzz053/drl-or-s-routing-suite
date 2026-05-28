@@ -71,6 +71,12 @@ def handle_switch_packet_in(app, ev):
 
     if app.is_configured_external_link_port(dpid, in_port):
         app.remember_external_host_source(src_mac, src_ip)
+        if eth.ethertype == ether_types.ETH_TYPE_ARP and app.should_drop_external_arp(src_ip, dst_ip):
+            app.logger.info(
+                "丢弃外部未知ARP: dpid=%s, in_port=%s, src_ip=%s, dst_ip=%s, src_mac=%s",
+                dpid, in_port, src_ip, dst_ip, src_mac,
+            )
+            return
 
     # 去重：同一交换机、同一源/目的 IP、同一源 MAC、同一 ARP opcode 在 TTL 内只处理一次
     if eth.ethertype == ether_types.ETH_TYPE_ARP:

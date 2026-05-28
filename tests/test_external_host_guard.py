@@ -2,6 +2,7 @@ from external_host_guard import (
     is_external_host_source,
     purge_host_records_for_source,
     remember_external_host_source,
+    should_drop_external_arp,
 )
 
 
@@ -39,3 +40,11 @@ def test_purge_host_records_for_external_source_removes_only_that_host():
             2: [["bb:bb:bb:bb:bb:bb", "10.0.0.31"]],
         },
     }
+
+
+def test_external_arp_to_real_management_subnet_is_dropped():
+    assert should_drop_external_arp("10.5.0.13", "10.5.1.201", ["10.0.0.0/24"])
+
+
+def test_external_arp_to_virtual_mininet_subnet_is_allowed():
+    assert not should_drop_external_arp("10.5.0.13", "10.0.0.28", ["10.0.0.0/24"])
