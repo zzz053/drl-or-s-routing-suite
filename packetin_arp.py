@@ -10,7 +10,43 @@
   处理主机 ARP 学习，仅在接入口记录主机位置并触发迁移清理（业务类型由 IP 包 L4 端口决定）。
 """
 
-from ryu.lib.packet import ethernet, ether_types
+from ryu.lib.packet import arp, ethernet, ether_types, packet
+
+from common_config import HYBRID_GATEWAY_IP, HYBRID_GATEWAY_MAC
+from hybrid_gateway import is_gateway_arp_request
+
+
+def _send_gateway_arp_reply(app, datapath, in_port, dst_mac, dst_ip):
+    parser = datapath.ofproto_parser
+    ofproto = datapath.ofproto
+
+    reply = packet.Packet()
+    reply.add_protocol(ethernet.ethernet(
+        ethertype=ether_types.ETH_TYPE_ARP,
+        dst=dst_mac,
+        src=HYBRID_GATEWAY_MAC,
+    ))
+    reply.add_protocol(arp.arp(
+        opcode=arp.ARP_REPLY,
+        src_mac=HYBRID_GATEWAY_MAC,
+        src_ip=HYBRID_GATEWAY_IP,
+        dst_mac=dst_mac,
+        dst_ip=dst_ip,
+    ))
+    reply.serialize()
+
+    out = parser.OFPPacketOut(
+        datapath=datapath,
+        buffer_id=ofproto.OFP_NO_BUFFER,
+        in_port=ofproto.OFPP_CONTROLLER,
+        actions=[parser.OFPActionOutput(in_port)],
+        data=reply.data,
+    )
+    datapath.send_msg(out)
+    app.logger.info(
+        "[HybridGateway] proxy_arp_reply gateway_ip=%s gateway_mac=%s dst_ip=%s dst_mac=%s dpid=%s in_port=%s",
+        HYBRID_GATEWAY_IP, HYBRID_GATEWAY_MAC, dst_ip, dst_mac, datapath.id, in_port,
+    )
 
 
 def handle_switch_packet_in(app, ev):
@@ -52,6 +88,9 @@ def handle_switch_packet_in(app, ev):
             dst_ip=dst_ip,
             extra=f"opcode={opcode}",
         )
+        if is_gateway_arp_request(eth.ethertype, opcode, dst_ip, HYBRID_GATEWAY_IP):
+            _send_gateway_arp_reply(app, datapath, in_port, src_mac, src_ip)
+            return
     elif eth.ethertype == ether_types.ETH_TYPE_IP:
         ip_proto = getattr(pkt, 'proto', None)
         app.log_packet_watch(
@@ -188,7 +227,7 @@ def handle_host_arp_packet_in(app, ev):
         if app.is_link_port(dpid, in_port):
             return
 
-        if app.is_external_host_source(src_mac, src_ip):
+        if app.should_skip_external_host_learning(src_mac, src_ip, dpid):
             app.logger.info(
                 "忽略外部链路来源主机学习: MAC=%s, IP=%s, dpid=%s, in_port=%s",
                 src_mac, src_ip, dpid, in_port,

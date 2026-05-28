@@ -28,6 +28,7 @@ from common_config import (
     FLOW_INSTALL_BARRIER_TIMEOUT,
     EXTERNAL_LINK_PORTS,
     EXTERNAL_ARP_ALLOWED_PREFIXES,
+    VIRTUAL_SWITCH_DPID_MAX,
 )
 from host_model import Host
 from controller_helpers import (
@@ -36,8 +37,9 @@ from controller_helpers import (
 )
 from external_host_guard import (
     is_external_host_source,
-    purge_host_records_for_source,
+    purge_virtual_host_records_for_source,
     remember_external_host_source,
+    should_skip_external_host_learning,
     should_drop_external_arp,
 )
 from packetin_lldp import handle_lldp_packet_in
@@ -1137,7 +1139,9 @@ class TopoAwareness(app_manager.RyuApp):
     def remember_external_host_source(self, mac, ip):
         if not remember_external_host_source(self.external_host_sources, mac, ip):
             return
-        removed = purge_host_records_for_source(self.host_to_sw_port, mac, ip)
+        removed = purge_virtual_host_records_for_source(
+            self.host_to_sw_port, mac, ip, VIRTUAL_SWITCH_DPID_MAX
+        )
         if removed:
             self.logger.info(
                 "清理外部链路误学习主机: mac=%s ip=%s removed=%s",
@@ -1146,6 +1150,15 @@ class TopoAwareness(app_manager.RyuApp):
 
     def is_external_host_source(self, mac, ip):
         return is_external_host_source(self.external_host_sources, mac, ip)
+
+    def should_skip_external_host_learning(self, mac, ip, dpid):
+        return should_skip_external_host_learning(
+            self.external_host_sources,
+            mac,
+            ip,
+            dpid,
+            VIRTUAL_SWITCH_DPID_MAX,
+        )
 
     def should_drop_external_arp(self, src_ip, dst_ip):
         return should_drop_external_arp(src_ip, dst_ip, EXTERNAL_ARP_ALLOWED_PREFIXES)

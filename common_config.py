@@ -72,6 +72,10 @@ EXTERNAL_ARP_ALLOWED_PREFIXES = [
     for item in os.environ.get("EXTERNAL_ARP_ALLOWED_PREFIXES", "10.0.0.0/24").split(",")
     if item.strip()
 ]
+VIRTUAL_SWITCH_DPID_MAX = int(os.environ.get("VIRTUAL_SWITCH_DPID_MAX", "1000"))
+HYBRID_GATEWAY_IP = os.environ.get("HYBRID_GATEWAY_IP", "10.0.0.254")
+HYBRID_GATEWAY_MAC = os.environ.get("HYBRID_GATEWAY_MAC", "02:00:00:00:fe:01")
+HYBRID_REAL_ROUTES = os.environ.get("HYBRID_REAL_ROUTES", "192.168.103.0/24")
 
 # 按主机 TCP/UDP 端口区间划分业务（闭区间）。
 # 顺序有意义：对每个包先按目的端口查表，再按源端口；未命中则使用 default。

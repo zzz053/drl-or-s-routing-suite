@@ -56,6 +56,14 @@ def test_start_suite_supports_optional_external_interface():
     assert 'sudo "$PYTHON_BIN" testbed/creat_test_topo.py "$EXTERNAL_INTF"' in text
 
 
+def test_topology_installs_real_subnet_routes_via_virtual_gateway():
+    text = (ROOT / "testbed" / "creat_test_topo.py").read_text(encoding="utf-8")
+
+    assert "configure_hybrid_host_routes(" in text
+    assert "HYBRID_GATEWAY_IP" in text
+    assert "HYBRID_REAL_ROUTES" in text
+
+
 def test_drl_assets_are_packaged_for_standalone_delivery():
     model_dir = ROOT / "drl-or-s" / "model" / "Military_mininet"
     topology_dir = ROOT / "drl-or-s" / "topology" / "Military"

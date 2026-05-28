@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 
 import itertools
+import os
 import random
 import sys
 import time
@@ -15,6 +16,26 @@ from hybrid_external_interface import add_hardware_interface, restore_network_co
 
 EXTERNAL_SWITCH = 's1'
 EXTERNAL_PORT = 20
+HYBRID_GATEWAY_IP = os.environ.get("HYBRID_GATEWAY_IP", "10.0.0.254")
+HYBRID_REAL_ROUTES = os.environ.get("HYBRID_REAL_ROUTES", "192.168.103.0/24")
+
+
+def _parse_hybrid_real_routes(raw_value):
+    routes = []
+    for item in (raw_value or "").split(","):
+        item = item.strip()
+        if item:
+            routes.append(item)
+    return routes
+
+
+def configure_hybrid_host_routes(hosts, gateway_ip=HYBRID_GATEWAY_IP, routes=None):
+    routes = _parse_hybrid_real_routes(HYBRID_REAL_ROUTES) if routes is None else routes
+    if not routes:
+        return
+    for host in hosts.values():
+        for route in routes:
+            host.cmd("ip route replace %s via %s" % (route, gateway_ip))
 
 
 def staggered_pingall(net, interval=0.3, bidirectional=False, count=1, timeout=1):
@@ -215,6 +236,7 @@ def create_topology(external_intf=None):
             switches[f's{i}'].start([ctrl])
 
     if external_intf:
+        configure_hybrid_host_routes(hosts)
         print("=== 接入真实交换机物理链路 ===")
         print("将宿主机网卡 %s 接入 %s:port%s" % (external_intf, EXTERNAL_SWITCH, EXTERNAL_PORT))
         external_state = add_hardware_interface(
