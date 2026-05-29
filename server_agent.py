@@ -1168,6 +1168,19 @@ class ServerAgent:
         fallback_response = None
         if route_mode in {'spf', 'shadow'} or drl_response is None:
             fallback_response = handle_path_request_with_policy(self.G, message, self.link_down_set)
+            if (
+                fallback_response.get('status') != 'ok'
+                and fallback_response.get('message', '').startswith('no path')
+                and self.link_down_set
+            ):
+                retry_response = handle_path_request_with_policy(self.G, message, {})
+                if retry_response.get('status') == 'ok':
+                    retry_response['fallback_reason'] = 'stale_link_down_ignored'
+                    logger.warning(
+                        "[Path] retrying with stale link_down ignored: src=%s dst=%s link_down_count=%d",
+                        src, dst, len(self.link_down_set)
+                    )
+                    fallback_response = retry_response
 
         response = self._choose_final_path_response(
             message, drl_response, fallback_response, route_mode)
