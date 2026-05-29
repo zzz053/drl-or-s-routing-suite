@@ -104,6 +104,7 @@ class ServerAgent:
         self.is_running = False
         self.clients = {}  # {client_addr: (socket, thread)}
         self.client_last_heartbeat = {}  # {client_addr: last_heartbeat_timestamp}
+        self.graph_lock = threading.RLock()
         self.client_lock = threading.Lock()  # 用于保护clients字典的线程锁
         
         # 心跳检测配置
@@ -661,6 +662,15 @@ class ServerAgent:
     
     def update_graph(self):
         """更新网络图"""
+        graph_lock = getattr(self, 'graph_lock', None)
+        if graph_lock is not None and not getattr(self, '_graph_update_locked', False):
+            with graph_lock:
+                self._graph_update_locked = True
+                try:
+                    return self.update_graph()
+                finally:
+                    self._graph_update_locked = False
+
         # 清空图
         self.G.clear()
         

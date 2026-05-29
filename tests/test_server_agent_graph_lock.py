@@ -1,0 +1,14 @@
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SERVER_AGENT = ROOT / "server_agent.py"
+
+
+def test_update_graph_uses_dedicated_reentrant_lock():
+    source = SERVER_AGENT.read_text(encoding="utf-8")
+
+    assert "self.graph_lock = threading.RLock()" in source
+    assert "graph_lock = getattr(self, 'graph_lock', None)" in source
+    assert "with graph_lock:" in source
+    assert "_graph_update_locked" in source
