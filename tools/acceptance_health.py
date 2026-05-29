@@ -7,9 +7,14 @@ import json
 from pathlib import Path
 import socket
 import subprocess
+from pathlib import Path
 import sys
 import urllib.error
 import urllib.request
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
 from tools.acceptance_config import AcceptanceConfigError, load_acceptance_config
 

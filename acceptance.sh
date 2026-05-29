@@ -21,6 +21,14 @@ usage() {
   echo "Config: $CONFIG"
 }
 
+sudo_cmd() {
+  if [ -n "${SUDO_PASSWORD:-}" ]; then
+    printf '%s\n' "$SUDO_PASSWORD" | sudo -S "$@"
+  else
+    sudo "$@"
+  fi
+}
+
 load_acceptance_env() {
   eval "$("$PYTHON_BIN" tools/acceptance_config.py --config "$CONFIG" --shell-env)"
 }
@@ -56,7 +64,7 @@ start_suite() {
   write_pid start_controllers "$!"
   sleep 1
 
-  nohup setsid bash -c 'tail -f /dev/null | sudo -E "$1" -u testbed/creat_test_topo.py "$2"' _ "$PYTHON_BIN" "$EXTERNAL_INTF" > logs/mininet_topology.log 2>&1 &
+  (tail -f /dev/null | sudo_cmd -E "$PYTHON_BIN" -u testbed/creat_test_topo.py "$EXTERNAL_INTF") > logs/mininet_topology.log 2>&1 &
   write_pid mininet_topology "$!"
 
   echo "DRL-OR-S acceptance environment started"
@@ -82,7 +90,7 @@ stop_suite() {
   fi
 
   if command -v sudo >/dev/null 2>&1; then
-    sudo mn -c || true
+    sudo_cmd mn -c || true
   else
     echo "warning: sudo command not found; skip sudo mn -c"
   fi
