@@ -31,6 +31,8 @@ def test_acceptance_script_supports_noninteractive_sudo_password():
 
     assert "SUDO_PASSWORD" in text
     assert "sudo -S" in text
+    assert "sudo -S -v" in text
+    assert 'sudo "$@"' in text
 
 
 def test_acceptance_script_uses_separate_mininet_python():
@@ -46,6 +48,14 @@ def test_acceptance_stop_cleans_stale_project_processes():
     assert 'pkill -f "server_agent.py"' in text
     assert 'pkill -f "drl-or-s/path_service.py"' in text
     assert 'pkill -f "testbed/creat_test_topo.py"' in text
+
+
+def test_acceptance_start_waits_for_path_service_and_clears_stale_logs():
+    text = (ROOT / "acceptance.sh").read_text(encoding="utf-8")
+
+    assert "wait_for_port" in text
+    assert "wait_for_port 127.0.0.1 8889" in text
+    assert "rm -f logs/*.log" in text
 
 
 def test_acceptance_tool_scripts_are_directly_executable():

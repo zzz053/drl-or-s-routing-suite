@@ -24,14 +24,43 @@ usage() {
 
 sudo_cmd() {
   if [ -n "${SUDO_PASSWORD:-}" ]; then
-    printf '%s\n' "$SUDO_PASSWORD" | sudo -S "$@"
-  else
-    sudo "$@"
+    printf '%s\n' "$SUDO_PASSWORD" | sudo -S -v
   fi
+  sudo "$@"
 }
 
 load_acceptance_env() {
   eval "$("$PYTHON_BIN" tools/acceptance_config.py --config "$CONFIG" --shell-env)"
+}
+
+wait_for_port() {
+  local host="$1"
+  local port="$2"
+  local timeout_seconds="${3:-60}"
+  local start_time
+  start_time="$(date +%s)"
+  while true; do
+    if "$PYTHON_BIN" - "$host" "$port" <<'PY'
+import socket
+import sys
+
+host = sys.argv[1]
+port = int(sys.argv[2])
+try:
+    with socket.create_connection((host, port), timeout=1):
+        pass
+except OSError:
+    raise SystemExit(1)
+PY
+    then
+      return 0
+    fi
+    if [ "$(( $(date +%s) - start_time ))" -ge "$timeout_seconds" ]; then
+      echo "timeout waiting for $host:$port" >&2
+      return 1
+    fi
+    sleep 1
+  done
 }
 
 ensure_external_interface() {
@@ -50,12 +79,13 @@ write_pid() {
 
 start_suite() {
   mkdir -p logs reports
+  rm -f logs/*.log
   load_acceptance_env
   ensure_external_interface
 
   nohup setsid "$PATH_SERVICE_PYTHON" drl-or-s/path_service.py --topo Military --port 8889 --model model/Military_mininet > logs/path_service.log 2>&1 &
   write_pid path_service "$!"
-  sleep 1
+  wait_for_port 127.0.0.1 8889 90
 
   nohup setsid "$PYTHON_BIN" server_agent.py "$SERVER_AGENT_ROUTE_MODE" > logs/server_agent.stdout.log 2>&1 &
   write_pid server_agent "$!"
