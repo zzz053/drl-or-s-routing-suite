@@ -33,6 +33,21 @@ def test_acceptance_script_supports_noninteractive_sudo_password():
     assert "sudo -S" in text
 
 
+def test_acceptance_script_uses_separate_mininet_python():
+    text = (ROOT / "acceptance.sh").read_text(encoding="utf-8")
+
+    assert "MININET_PYTHON" in text
+    assert '"$MININET_PYTHON" -u testbed/creat_test_topo.py' in text
+
+
+def test_acceptance_stop_cleans_stale_project_processes():
+    text = (ROOT / "acceptance.sh").read_text(encoding="utf-8")
+
+    assert 'pkill -f "server_agent.py"' in text
+    assert 'pkill -f "drl-or-s/path_service.py"' in text
+    assert 'pkill -f "testbed/creat_test_topo.py"' in text
+
+
 def test_acceptance_tool_scripts_are_directly_executable():
     for script in [
         "tools/acceptance_health.py",

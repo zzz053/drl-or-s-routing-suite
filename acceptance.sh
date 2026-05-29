@@ -6,6 +6,7 @@ cd "$(dirname "$0")"
 COMMAND="${1:-}"
 CONFIG="${ACCEPTANCE_CONFIG:-config/hybrid_acceptance.json}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
+MININET_PYTHON="${MININET_PYTHON:-python3}"
 SERVER_AGENT_ROUTE_MODE="${SERVER_AGENT_ROUTE_MODE:-hybrid}"
 
 if [ -n "${PATH_SERVICE_PYTHON:-}" ]; then
@@ -64,7 +65,7 @@ start_suite() {
   write_pid start_controllers "$!"
   sleep 1
 
-  (tail -f /dev/null | sudo_cmd -E "$PYTHON_BIN" -u testbed/creat_test_topo.py "$EXTERNAL_INTF") > logs/mininet_topology.log 2>&1 &
+  (tail -f /dev/null | sudo_cmd -E "$MININET_PYTHON" -u testbed/creat_test_topo.py "$EXTERNAL_INTF") > logs/mininet_topology.log 2>&1 &
   write_pid mininet_topology "$!"
 
   echo "DRL-OR-S acceptance environment started"
@@ -88,6 +89,10 @@ stop_suite() {
       rm -f "$pidfile"
     done
   fi
+
+  pkill -f "server_agent.py" 2>/dev/null || true
+  pkill -f "drl-or-s/path_service.py" 2>/dev/null || true
+  pkill -f "testbed/creat_test_topo.py" 2>/dev/null || true
 
   if command -v sudo >/dev/null 2>&1; then
     sudo_cmd mn -c || true
