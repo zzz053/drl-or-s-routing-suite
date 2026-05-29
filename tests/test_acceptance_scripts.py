@@ -35,6 +35,12 @@ def test_acceptance_script_supports_noninteractive_sudo_password():
     assert 'sudo "$@"' in text
 
 
+def test_shell_scripts_are_forced_to_lf_for_linux_deployment():
+    text = (ROOT / ".gitattributes").read_text(encoding="utf-8")
+
+    assert "*.sh text eol=lf" in text
+
+
 def test_acceptance_script_uses_separate_mininet_python():
     text = (ROOT / "acceptance.sh").read_text(encoding="utf-8")
 
