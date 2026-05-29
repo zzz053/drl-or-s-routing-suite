@@ -1728,7 +1728,10 @@ class TopoAwareness(app_manager.RyuApp):
         dst_dpid = link.dst.dpid
         if (src_dpid, dst_dpid) in self.topo_inter_link:
             del self.topo_inter_link[(src_dpid, dst_dpid)]
-            self.graph.remove_edge(src_dpid, dst_dpid)
+            if self.graph.has_edge(src_dpid, dst_dpid):
+                self.graph.remove_edge(src_dpid, dst_dpid)
+            else:
+                self.logger.debug("忽略不存在的链路删除事件: %s -> %s", src_dpid, dst_dpid)
 
     def link_timeout_detection(self, access_link):  #  access_link，这是一个字典，通常用于存储链路信息，其中键是源和目标节点的元组，值是与链路相关的属性（例如时间戳）
         """

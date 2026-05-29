@@ -3,6 +3,7 @@ from tools.acceptance_health import (
     classify_health,
     command_contains_route,
     flow_output_has_bidirectional_flows,
+    run_command,
 )
 
 
@@ -42,3 +43,25 @@ def test_flow_output_has_bidirectional_idle_timeout_flows():
         virtual_ip="10.0.0.28",
         real_ip="192.168.103.3",
     )
+
+
+def test_run_command_supplies_sudo_password_without_changing_non_sudo(monkeypatch):
+    calls = []
+
+    class Completed:
+        returncode = 0
+        stdout = "ok"
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return Completed()
+
+    monkeypatch.setenv("SUDO_PASSWORD", "h")
+    monkeypatch.setattr("tools.acceptance_health.subprocess.run", fake_run)
+
+    code, output = run_command(["sudo", "mnexec", "-a", "123", "ip", "route"])
+
+    assert code == 0
+    assert output == "ok"
+    assert calls[0][0][:2] == ["sudo", "-S"]
+    assert calls[0][1]["input"] == "h\n"

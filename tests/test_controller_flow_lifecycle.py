@@ -91,6 +91,15 @@ def test_link_delete_notifies_root_before_reroute():
     assert delete_pos < notify_pos < invalidate_pos
 
 
+def test_controller_delete_inter_link_is_idempotent_for_missing_graph_edges():
+    text = CONTROLLER.read_text(encoding="utf-8")
+    start = text.index("def delete_inter_link")
+    body = text[start:text.index("def link_timeout_detection", start)]
+
+    assert "self.graph.has_edge(src_dpid, dst_dpid)" in body
+    assert "self.graph.remove_edge(src_dpid, dst_dpid)" in body
+
+
 def test_web_refreshes_selected_switch_flows_after_manual_changes():
     text = WEB_UI.read_text(encoding="utf-8")
 

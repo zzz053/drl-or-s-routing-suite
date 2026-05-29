@@ -4,6 +4,7 @@
 import argparse
 from dataclasses import asdict, dataclass
 import json
+import os
 from pathlib import Path
 import socket
 import subprocess
@@ -72,10 +73,15 @@ def flow_output_has_bidirectional_flows(outputs, virtual_ip, real_ip):
 
 
 def run_command(command, timeout=8):
+    input_text = None
+    if command and command[0] == "sudo" and os.environ.get("SUDO_PASSWORD"):
+        command = ["sudo", "-S"] + list(command[1:])
+        input_text = os.environ["SUDO_PASSWORD"] + "\n"
     try:
         completed = subprocess.run(
             command,
             text=True,
+            input=input_text,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             timeout=timeout,
