@@ -70,6 +70,8 @@ def test_acceptance_start_waits_for_services_and_clears_stale_logs():
     assert "wait_for_port 127.0.0.1 8889" in text
     assert "for port in $CONTROLLER_PORTS" in text
     assert 'wait_for_port 127.0.0.1 "$port"' in text
+    assert "wait_for_mininet_routes" in text
+    assert '"$VALIDATION_VIRTUAL_HOST_NAME" "$HYBRID_REAL_ROUTES"' in text
     assert "rm -f logs/*.log" in text
 
 

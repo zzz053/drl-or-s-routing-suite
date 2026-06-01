@@ -67,6 +67,41 @@ PY
   done
 }
 
+wait_for_mininet_routes() {
+  local host_name="$1"
+  local routes_csv="$2"
+  local timeout_seconds="${3:-240}"
+  local start_time
+  start_time="$(date +%s)"
+  while true; do
+    local pid
+    pid="$(pgrep -f "mininet:${host_name}" | head -n 1 || true)"
+    if [ -n "$pid" ]; then
+      local route_output
+      route_output="$(sudo_cmd mnexec -a "$pid" ip route 2>/dev/null || true)"
+      local all_present=1
+      local old_ifs="$IFS"
+      IFS=","
+      for route in $routes_csv; do
+        route="${route#"${route%%[![:space:]]*}"}"
+        route="${route%"${route##*[![:space:]]}"}"
+        if [ -n "$route" ] && ! printf '%s\n' "$route_output" | grep -q "$route"; then
+          all_present=0
+        fi
+      done
+      IFS="$old_ifs"
+      if [ "$all_present" -eq 1 ]; then
+        return 0
+      fi
+    fi
+    if [ "$(( $(date +%s) - start_time ))" -ge "$timeout_seconds" ]; then
+      echo "timeout waiting for Mininet host $host_name routes: $routes_csv" >&2
+      return 1
+    fi
+    sleep 2
+  done
+}
+
 ensure_external_interface() {
   if command -v ip >/dev/null 2>&1; then
     ip link show "$EXTERNAL_INTF" >/dev/null
@@ -103,6 +138,7 @@ start_suite() {
 
   (tail -f /dev/null | sudo_cmd -E "$MININET_PYTHON" -u testbed/creat_test_topo.py "$EXTERNAL_INTF") > logs/mininet_topology.log 2>&1 &
   write_pid mininet_topology "$!"
+  wait_for_mininet_routes "$VALIDATION_VIRTUAL_HOST_NAME" "$HYBRID_REAL_ROUTES" 240
 
   echo "DRL-OR-S acceptance environment started"
   echo "Web UI: http://localhost:6009"

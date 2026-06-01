@@ -144,6 +144,7 @@ def build_runtime_env(config):
         "EXTERNAL_INTF": config["external_interface"],
         "EXTERNAL_LINK_PORTS": format_external_link_ports(config),
         "CONTROLLER_PORTS": " ".join(str(port) for port in config["controllers"]["ports"]),
+        "VALIDATION_VIRTUAL_HOST_NAME": config["validation"]["virtual_host_name"],
         "HYBRID_GATEWAY_IP": config["hybrid"]["gateway_ip"],
         "HYBRID_GATEWAY_MAC": config["hybrid"]["gateway_mac"],
         "HYBRID_REAL_ROUTES": format_real_routes(config),
