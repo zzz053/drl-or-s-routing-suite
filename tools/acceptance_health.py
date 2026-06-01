@@ -158,10 +158,11 @@ def _find_mininet_host_pid(host_name, runner=run_command):
         return None, output
     for line in output.splitlines():
         stripped = line.strip()
-        if f"bash --norc --noediting -is mininet:{host_name}" not in stripped:
+        try:
+            pid, args = stripped.split(None, 1)
+        except ValueError:
             continue
-        pid = stripped.split(None, 1)[0]
-        if pid.isdigit():
+        if args == f"bash --norc --noediting -is mininet:{host_name}" and pid.isdigit():
             return pid, output
     return None, output
 
