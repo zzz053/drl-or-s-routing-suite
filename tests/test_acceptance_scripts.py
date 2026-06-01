@@ -19,7 +19,7 @@ def test_acceptance_script_uses_config_driven_environment_and_sudo_boundary():
 
     assert "tools/acceptance_config.py" in text
     assert "--shell-env" in text
-    assert "sudo_cmd -E" in text
+    assert "sudo -E" in text
     assert "testbed/creat_test_topo.py" in text
     assert "start_controllers_test.py start -n" in text
     assert "start_controllers_test.py stop" in text
@@ -73,6 +73,7 @@ def test_acceptance_start_waits_for_services_and_clears_stale_logs():
     assert "wait_for_mininet_routes" in text
     assert "bash --norc --noediting -is mininet:${host_name}" in text
     assert '"$VALIDATION_VIRTUAL_HOST_NAME" "$HYBRID_REAL_ROUTES"' in text
+    assert "nohup setsid bash -c" in text
     assert 'testbed/creat_test_topo.py "$EXTERNAL_INTF" --hold' in text
     assert "rm -f logs/*.log" in text
 
