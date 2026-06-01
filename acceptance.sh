@@ -8,6 +8,10 @@ CONFIG="${ACCEPTANCE_CONFIG:-config/hybrid_acceptance.json}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 MININET_PYTHON="${MININET_PYTHON:-python3}"
 SERVER_AGENT_ROUTE_MODE="${SERVER_AGENT_ROUTE_MODE:-hybrid}"
+PYTHON_BIN_DIR="$(dirname "$PYTHON_BIN")"
+if [ -x "$PYTHON_BIN_DIR/ryu-manager" ]; then
+  export PATH="$PYTHON_BIN_DIR:$PATH"
+fi
 
 if [ -n "${PATH_SERVICE_PYTHON:-}" ]; then
   :

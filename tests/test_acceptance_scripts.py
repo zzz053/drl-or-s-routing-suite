@@ -48,6 +48,13 @@ def test_acceptance_script_uses_separate_mininet_python():
     assert '"$MININET_PYTHON" -u testbed/creat_test_topo.py' in text
 
 
+def test_acceptance_script_adds_python_bin_dir_to_path_for_ryu_manager():
+    text = (ROOT / "acceptance.sh").read_text(encoding="utf-8")
+
+    assert 'PYTHON_BIN_DIR="$(dirname "$PYTHON_BIN")"' in text
+    assert 'export PATH="$PYTHON_BIN_DIR:$PATH"' in text
+
+
 def test_acceptance_stop_cleans_stale_project_processes():
     text = (ROOT / "acceptance.sh").read_text(encoding="utf-8")
 
