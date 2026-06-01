@@ -74,6 +74,7 @@ def test_acceptance_start_waits_for_services_and_clears_stale_logs():
     assert "bash --norc --noediting -is mininet:${host_name}" in text
     assert '"$VALIDATION_VIRTUAL_HOST_NAME" "$HYBRID_REAL_ROUTES"' in text
     assert "nohup setsid bash -c" in text
+    assert 'sudo -S -E "$MININET_PYTHON"' in text
     assert 'testbed/creat_test_topo.py "$EXTERNAL_INTF" --hold' in text
     assert "rm -f logs/*.log" in text
 
