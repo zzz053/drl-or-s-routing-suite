@@ -21,7 +21,6 @@ def valid_config():
         "external_interface": "eno1",
         "controllers": {
             "ports": [6654, 6655, 6656, 6657, 6658, 6659, 6670],
-            "forbidden_ports": [6671],
         },
         "hybrid": {
             "external_link_ports": [{"dpid": 1, "port": 20}],
@@ -43,7 +42,17 @@ def test_load_acceptance_config_validates_and_preserves_required_values(tmp_path
 
     assert cfg["external_interface"] == "eno1"
     assert cfg["controllers"]["ports"] == [6654, 6655, 6656, 6657, 6658, 6659, 6670]
+    assert "forbidden_ports" not in cfg["controllers"]
     assert cfg["validation"]["real_host_ip"] == "192.168.103.3"
+
+
+def test_load_acceptance_config_ignores_legacy_forbidden_ports(tmp_path):
+    data = valid_config()
+    data["controllers"]["forbidden_ports"] = [6671]
+
+    cfg = load_acceptance_config(write_config(tmp_path, data))
+
+    assert "forbidden_ports" not in cfg["controllers"]
 
 
 def test_load_acceptance_config_does_not_guess_external_interface(tmp_path):
@@ -74,3 +83,13 @@ def test_build_runtime_env_maps_config_to_existing_variables():
     assert env["HYBRID_GATEWAY_IP"] == "10.0.0.254"
     assert env["HYBRID_GATEWAY_MAC"] == "02:00:00:00:fe:01"
     assert env["HYBRID_REAL_ROUTES"] == "192.168.103.0/24"
+
+
+def test_environment_specific_acceptance_configs_are_valid():
+    vm_cfg = load_acceptance_config("config/hybrid_acceptance.vm.json")
+    server_cfg = load_acceptance_config("config/hybrid_acceptance.server.json")
+
+    assert vm_cfg["external_interface"] == "ens34"
+    assert server_cfg["external_interface"] != vm_cfg["external_interface"]
+    assert format_external_link_ports(vm_cfg) == "1:20"
+    assert format_external_link_ports(server_cfg) == "1:20"

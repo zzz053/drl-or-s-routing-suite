@@ -31,7 +31,7 @@ class FakeAgent:
 def test_build_acceptance_status_ready_when_control_plane_and_recent_session_match(tmp_path):
     config_path = tmp_path / "hybrid_acceptance.json"
     config_path.write_text(
-        '{"external_interface":"eno1","controllers":{"ports":[6654],"forbidden_ports":[6671]},'
+        '{"external_interface":"eno1","controllers":{"ports":[6654]},'
         '"hybrid":{"external_link_ports":[{"dpid":1,"port":20}],"gateway_ip":"10.0.0.254",'
         '"gateway_mac":"02:00:00:00:fe:01","real_routes":["192.168.103.0/24"]},'
         '"validation":{"virtual_host_name":"h28","virtual_host_ip":"10.0.0.28",'

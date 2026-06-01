@@ -18,6 +18,8 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from tools.acceptance_config import AcceptanceConfigError, load_acceptance_config
+from tools.acceptance_feature_audit import audit_features
+from tools.web_consistency_audit import audit_payloads
 
 
 LOG_DIR = Path("logs")
@@ -60,22 +62,65 @@ def command_contains_route(output, cidr, gateway_ip):
 def flow_output_has_bidirectional_flows(outputs, virtual_ip, real_ip):
     combined = "\n".join(outputs or [])
     forward = (
-        "idle_timeout=120" in combined
-        and f"nw_src={virtual_ip}" in combined
+        f"nw_src={virtual_ip}" in combined
         and f"nw_dst={real_ip}" in combined
     )
     reverse = (
-        "idle_timeout=120" in combined
-        and f"nw_src={real_ip}" in combined
+        f"nw_src={real_ip}" in combined
         and f"nw_dst={virtual_ip}" in combined
     )
     return forward and reverse
 
 
+def switch_names_for_flow_checks(config, route_sessions=None, virtual_switch_dpid_max=1000):
+    dpids = set()
+    for item in (config.get("hybrid", {}) or {}).get("external_link_ports", []):
+        try:
+            dpid = int(item.get("dpid"))
+        except (TypeError, ValueError):
+            continue
+        if 0 < dpid <= virtual_switch_dpid_max:
+            dpids.add(dpid)
+
+    validation = config.get("validation", {}) or {}
+    expected_virtual = validation.get("expected_virtual_switch_dpid")
+    if expected_virtual is not None:
+        try:
+            dpid = int(expected_virtual)
+        except (TypeError, ValueError):
+            dpid = None
+        if dpid and 0 < dpid <= virtual_switch_dpid_max:
+            dpids.add(dpid)
+
+    for session in (route_sessions or {}).get("sessions", []) or []:
+        for node in session.get("switch_path", []) or []:
+            try:
+                dpid = int(node)
+            except (TypeError, ValueError):
+                continue
+            if 0 < dpid <= virtual_switch_dpid_max:
+                dpids.add(dpid)
+
+    return [f"s{dpid}" for dpid in sorted(dpids)]
+
+
+def _expected_external_bridge_ports(config, virtual_switch_dpid_max=1000):
+    expected = {}
+    for item in (config.get("hybrid", {}) or {}).get("external_link_ports", []):
+        try:
+            dpid = int(item.get("dpid"))
+            port = int(item.get("port"))
+        except (TypeError, ValueError):
+            continue
+        if 0 < dpid <= virtual_switch_dpid_max:
+            expected[f"s{dpid}"] = port
+    return expected
+
+
 def run_command(command, timeout=8):
     input_text = None
     if command and command[0] == "sudo" and os.environ.get("SUDO_PASSWORD"):
-        command = ["sudo", "-S"] + list(command[1:])
+        command = ["sudo", "-S", "-p", ""] + list(command[1:])
         input_text = os.environ["SUDO_PASSWORD"] + "\n"
     try:
         completed = subprocess.run(
@@ -110,18 +155,20 @@ def check_required_ports(config):
             checks.append(CheckResult(f"port_{port}", "pass", f"端口 {port} 正在监听"))
         else:
             checks.append(CheckResult(f"port_{port}", "fail", f"端口 {port} 未监听"))
-
-    for port in config["controllers"].get("forbidden_ports", []):
-        if tcp_port_listening(port):
-            checks.append(CheckResult(f"forbidden_port_{port}", "fail", f"禁用端口 {port} 正在监听"))
-        else:
-            checks.append(CheckResult(f"forbidden_port_{port}", "pass", f"禁用端口 {port} 未监听"))
     return checks
 
 
 def check_web_apis():
     checks = []
-    for path in ("/api/health", "/api/statistics", "/api/acceptance/status"):
+    for path in (
+        "/api/health",
+        "/api/statistics",
+        "/api/acceptance/status",
+        "/api/controllers",
+        "/api/topo",
+        "/api/graph?include_flows=0",
+        "/api/route_sessions",
+    ):
         url = f"{WEB_BASE_URL}{path}"
         try:
             with urllib.request.urlopen(url, timeout=2) as resp:
@@ -132,6 +179,30 @@ def check_web_apis():
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             checks.append(CheckResult(f"web_{path}", "fail", f"{path} 不可访问", str(exc)))
     return checks
+
+
+def fetch_web_json(path):
+    url = f"{WEB_BASE_URL}{path}"
+    with urllib.request.urlopen(url, timeout=2) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def check_web_consistency():
+    try:
+        graph = fetch_web_json("/api/graph?include_flows=0")
+        sessions = fetch_web_json("/api/route_sessions")
+    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        return [CheckResult("web_consistency", "fail", "Web 拓扑一致性审计不可用", str(exc))]
+
+    errors = audit_payloads(graph, sessions)
+    if errors:
+        return [CheckResult("web_consistency", "fail", "Web 拓扑和路径会话不一致", "\n".join(errors[:20]))]
+    details = (
+        f"nodes={len(graph.get('nodes') or [])}, "
+        f"edges={len(graph.get('edges') or [])}, "
+        f"sessions={len(sessions.get('sessions') or [])}"
+    )
+    return [CheckResult("web_consistency", "pass", "Web 拓扑和路径会话一致", details)]
 
 
 def check_recent_logs(log_dir=LOG_DIR, max_lines=400):
@@ -150,6 +221,80 @@ def check_recent_logs(log_dir=LOG_DIR, max_lines=400):
     if severe:
         return [CheckResult("recent_logs", "fail", "最近日志存在严重错误", "\n".join(severe[:20]))]
     return [CheckResult("recent_logs", "pass", "最近日志未发现严重错误")]
+
+
+def check_feature_audit(feature_audit):
+    status = feature_audit.get("status", "fail")
+    failed = [
+        item.get("name", "<unknown>")
+        for item in feature_audit.get("features", [])
+        if item.get("status") != "pass" and item.get("required", True)
+    ]
+    if status == "pass":
+        return [CheckResult("feature_audit", "pass", "项目核心功能覆盖审计通过")]
+    return [CheckResult("feature_audit", "fail", "项目核心功能覆盖审计失败", "\n".join(failed))]
+
+
+def check_external_interface(config, runner=run_command):
+    checks = []
+    intf = config.get("external_interface", "")
+    expected = _expected_external_bridge_ports(config)
+    expected_bridges = sorted(expected)
+
+    code, output = runner(["ip", "link", "show", intf], timeout=5)
+    if code != 0:
+        return [CheckResult("external_interface_exists", "fail", f"配置外部网卡 {intf} 不存在", output)]
+    checks.append(CheckResult("external_interface_exists", "pass", f"配置外部网卡 {intf} 存在"))
+
+    code, output = runner(["ip", "route", "show", "default"], timeout=5)
+    if code == 0 and any(f" dev {intf}" in line for line in output.splitlines()):
+        checks.append(CheckResult(
+            "external_interface_default_route",
+            "fail",
+            f"配置外部网卡 {intf} 承载默认路由，不能作为数据面网卡",
+            output,
+        ))
+    else:
+        checks.append(CheckResult("external_interface_default_route", "pass", f"配置外部网卡 {intf} 未承载默认路由", output))
+
+    code, output = runner(["sudo", "ovs-vsctl", "port-to-br", intf], timeout=5)
+    if code != 0:
+        return checks + [CheckResult(
+            "external_interface_ovs_bridge",
+            "fail",
+            f"配置外部网卡 {intf} 未加入预期 OVS 边界 {', '.join(expected_bridges) or '-'}",
+            output,
+        )]
+    bridge = output.strip()
+    if bridge not in expected:
+        return checks + [CheckResult(
+            "external_interface_ovs_bridge",
+            "fail",
+            f"配置外部网卡 {intf} 接入 {bridge}，但配置边界是 {', '.join(expected_bridges) or '-'}",
+            output,
+        )]
+    checks.append(CheckResult("external_interface_ovs_bridge", "pass", f"配置外部网卡 {intf} 已接入 {bridge}"))
+
+    code, output = runner(["sudo", "ovs-vsctl", "get", "Interface", intf, "ofport"], timeout=5)
+    if code != 0:
+        checks.append(CheckResult("external_interface_ofport", "fail", f"无法读取 {intf} 的 OpenFlow 端口", output))
+        return checks
+    try:
+        actual_port = int(output.strip())
+    except ValueError:
+        checks.append(CheckResult("external_interface_ofport", "fail", f"{intf} 的 OpenFlow 端口不是数字", output))
+        return checks
+    expected_port = expected[bridge]
+    if actual_port != expected_port:
+        checks.append(CheckResult(
+            "external_interface_ofport",
+            "fail",
+            f"配置外部网卡 {intf} ofport={actual_port}，预期 {bridge}:port{expected_port}",
+            output,
+        ))
+    else:
+        checks.append(CheckResult("external_interface_ofport", "pass", f"配置外部网卡 {intf} 已固定为 {bridge}:port{expected_port}"))
+    return checks
 
 
 def _find_mininet_host_pid(host_name, runner=run_command):
@@ -212,9 +357,19 @@ def check_data_plane(config, runner=run_command):
         message = f"{label} {'通过' if code == 0 else '未通过'}"
         checks.append(CheckResult(label, status, message, output))
 
+    try:
+        route_sessions = fetch_web_json("/api/route_sessions")
+    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError):
+        route_sessions = {}
+
     flow_outputs = []
     flow_failed = False
-    for switch in ("s28", "s1"):
+    switch_names = switch_names_for_flow_checks(config, route_sessions=route_sessions)
+    if not switch_names:
+        checks.append(CheckResult("ovs_flows", "risk", "未能推导需要检查的 OVS 交换机"))
+        return checks
+
+    for switch in switch_names:
         code, output = runner(["sudo", "ovs-ofctl", "dump-flows", switch], timeout=5)
         flow_outputs.append(output)
         if code != 0:
@@ -222,9 +377,9 @@ def check_data_plane(config, runner=run_command):
     if flow_failed:
         checks.append(CheckResult("ovs_flows", "risk", "OVS 流表检查不可用", "\n".join(flow_outputs)))
     elif flow_output_has_bidirectional_flows(flow_outputs, virtual_ip=virtual_ip, real_ip=real_ip):
-        checks.append(CheckResult("ovs_flows", "pass", "s28/s1 存在虚实双向流表", "\n".join(flow_outputs)))
+        checks.append(CheckResult("ovs_flows", "pass", f"{'/'.join(switch_names)} 存在虚实双向流表", "\n".join(flow_outputs)))
     else:
-        checks.append(CheckResult("ovs_flows", "risk", "未发现完整虚实双向 idle_timeout=120 流表", "\n".join(flow_outputs)))
+        checks.append(CheckResult("ovs_flows", "risk", "未发现完整虚实双向流表", "\n".join(flow_outputs)))
     return checks
 
 
@@ -240,15 +395,20 @@ def run_health(config_path="config/hybrid_acceptance.json"):
             "data_checks": [],
         }
 
+    feature_audit = audit_features()
     control_checks = []
+    control_checks.extend(check_feature_audit(feature_audit))
+    control_checks.extend(check_external_interface(config))
     control_checks.extend(check_required_ports(config))
     control_checks.extend(check_web_apis())
+    control_checks.extend(check_web_consistency())
     control_checks.extend(check_recent_logs())
     data_checks = check_data_plane(config)
     status = classify_health(control_checks, data_checks)
     return {
         "status": status,
         "config": config,
+        "feature_audit": feature_audit,
         "control_checks": [item.to_dict() for item in control_checks],
         "data_checks": [item.to_dict() for item in data_checks],
     }

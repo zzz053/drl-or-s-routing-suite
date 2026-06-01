@@ -54,6 +54,22 @@ def _filter_checks(checks, prefixes=(), names=()):
     return selected
 
 
+def _format_feature_table(feature_audit):
+    features = (feature_audit or {}).get("features", [])
+    if not features:
+        return "未执行功能覆盖审计。"
+    lines = ["| 功能项 | 状态 | 说明 |", "| --- | --- | --- |"]
+    for item in features:
+        lines.append(
+            "| {name} | {status} | {message} |".format(
+                name=item.get("name", ""),
+                status=_label(item.get("status", "")),
+                message=str(item.get("message", "")).replace("|", "\\|"),
+            )
+        )
+    return "\n".join(lines)
+
+
 def render_report(health_result):
     config = health_result.get("config") or {}
     controllers = config.get("controllers", {})
@@ -61,8 +77,9 @@ def render_report(health_result):
     validation = config.get("validation", {})
     control_checks = health_result.get("control_checks", [])
     data_checks = health_result.get("data_checks", [])
+    feature_audit = health_result.get("feature_audit", {})
 
-    port_checks = _filter_checks(control_checks, prefixes=("port_", "forbidden_port_"))
+    port_checks = _filter_checks(control_checks, prefixes=("port_",))
     web_checks = _filter_checks(control_checks, prefixes=("web_",))
     log_checks = _filter_checks(control_checks, names=("recent_logs",))
 
@@ -95,7 +112,6 @@ def render_report(health_result):
         "## 控制器状态",
         "",
         f"- 期望控制器端口：{', '.join(str(p) for p in controllers.get('ports', [])) or '-'}",
-        f"- 禁用控制器端口：{', '.join(str(p) for p in controllers.get('forbidden_ports', [])) or '-'}",
         "",
         "## Web API 状态",
         "",
@@ -106,6 +122,12 @@ def render_report(health_result):
         f"- 静态边界端口：{external_links or '-'}",
         f"- 网关 MAC：{hybrid.get('gateway_mac', '-')}",
         f"- 检查说明：跨 VM 边界 LLDP 不作为验收前提，使用静态配置确认边界。",
+        "",
+        "## 项目功能覆盖",
+        "",
+        f"- 审计结论：{_label(feature_audit.get('status', '未执行'))}",
+        "",
+        _format_feature_table(feature_audit),
         "",
         "## 数据面验证",
         "",

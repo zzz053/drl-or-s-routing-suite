@@ -10,7 +10,7 @@ def test_acceptance_script_exposes_required_commands():
     text = (ROOT / "acceptance.sh").read_text(encoding="utf-8")
 
     assert 'case "$COMMAND" in' in text
-    for command in ["start)", "stop)", "health)", "report)"]:
+    for command in ["start)", "stop)", "health)", "audit)", "load)", "report)"]:
         assert command in text
 
 
@@ -24,6 +24,14 @@ def test_acceptance_script_uses_config_driven_environment_and_sudo_boundary():
     assert "start_controllers_test.py start -n" in text
     assert "start_controllers_test.py stop" in text
     assert "sudo_cmd mn -c" in text
+
+
+def test_acceptance_start_refuses_to_reuse_management_default_route_interface_without_override():
+    text = (ROOT / "acceptance.sh").read_text(encoding="utf-8")
+
+    assert "ALLOW_EXTERNAL_INTF_HAS_DEFAULT_ROUTE" in text
+    assert "ip route show default" in text
+    assert "refusing to use external interface" in text
 
 
 def test_acceptance_script_supports_noninteractive_sudo_password():
@@ -82,6 +90,7 @@ def test_acceptance_start_waits_for_services_and_clears_stale_logs():
 def test_acceptance_tool_scripts_are_directly_executable():
     for script in [
         "tools/acceptance_health.py",
+        "tools/mininet_load_test.py",
         "tools/generate_acceptance_report.py",
     ]:
         result = subprocess.run(
@@ -99,6 +108,10 @@ def test_vm_acceptance_doc_mentions_static_boundary_and_lldp_limitation():
     text = (ROOT / "docs" / "vm-acceptance-deployment.md").read_text(encoding="utf-8")
 
     assert "config/hybrid_acceptance.json" in text
+    assert "config/hybrid_acceptance.vm.json" in text
+    assert "config/hybrid_acceptance.server.json" in text
+    assert "ens34" in text
+    assert "eno1" in text
     assert "LLDP" in text
     assert "静态虚实边界" in text
     assert "./acceptance.sh start" in text

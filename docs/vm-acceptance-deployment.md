@@ -1,76 +1,50 @@
 # VM 验收部署说明
 
-本文档用于把当前项目拷贝到验收单位的 Linux 虚拟机后，完成 Mininet 虚拟网络与真实 SDN 交换机网络的虚实通信验收。
+本文档用于把当前项目拷贝到 Linux 虚拟机后，完成 Mininet 虚拟网络与真实 SDN 交换机网络的虚实通信验收。
 
-## 1. VM 拷贝和首次启动
+## 1. 配置文件选择
 
-1. 将完整项目目录拷贝到 Linux VM。
-2. 首次启动后进入项目根目录。
-3. 确认项目目录中存在：
-   - `acceptance.sh`
-   - `config/hybrid_acceptance.json`
-   - `server_agent.py`
-   - `drl-or-s/path_service.py`
-   - `testbed/creat_test_topo.py`
+项目现在保留三类验收配置：
 
-## 2. 必需 Linux 包和 Python 环境
+- `config/hybrid_acceptance.json`：当前默认验收配置。当前 VM 环境使用 `ens34`。
+- `config/hybrid_acceptance.vm.json`：VM 环境模板，`external_interface` 固定为 `ens34`。
+- `config/hybrid_acceptance.server.json`：服务器环境模板，`external_interface` 暂保留为 `eno1`，必须在服务器实机可访问后用 `ip link` 和 OVS 结果复核。
 
-验收 VM 需要具备现有项目运行环境：
-
-- Python 3
-- Ryu
-- Mininet
-- Open vSwitch
-- Flask
-- NetworkX
-- PyTorch 及项目 DRL 依赖
-
-如果服务器上使用 conda 环境，建议继续使用原环境；脚本会优先识别：
+如果换到另一台 VM 或服务器，不要沿用旧网口名。先执行：
 
 ```bash
-$HOME/miniconda3/envs/ryu_drl_s/bin/python
+ip addr
+ip route show default
 ```
 
-也可以显式指定：
+管理网卡通常承载 SSH 和默认路由，不能直接加入 OVS。外部数据面网卡应连接真实 SDN 网络，且不承载默认路由。
 
-```bash
-PYTHON_BIN=python3 PATH_SERVICE_PYTHON=/path/to/python ./acceptance.sh start
-```
+## 2. VM 当前网口约定
 
-## 3. 网卡模式和接口命名
+当前已验证的 VM 网口是：
 
-VM 必须有一块可以接入真实交换机网络的网卡。建议使用桥接或直通方式，让 Linux VM 内部能看到该网卡。
+- `ens33`：管理网卡，承载默认路由和 SSH。
+- `ens34`：外部数据面网卡，接入真实交换机侧网络。
 
-查看网卡名：
-
-```bash
-ip link
-```
-
-把实际网卡名写入：
-
-```text
-config/hybrid_acceptance.json
-```
-
-示例：
+因此 VM 上应使用：
 
 ```json
 {
-  "external_interface": "eno1"
+  "external_interface": "ens34"
 }
 ```
 
-## 4. 真实交换机接线方式
+不要在 VM 上使用服务器侧的 `eno1` 配置。`eno1` 只适用于服务器实机网口名确认为 `eno1` 的环境。
 
-当前 P0 方案使用静态虚实边界，不依赖 VM 边界上的 LLDP 自动发现。
+## 3. 静态虚实边界
 
-推荐接线：
+当前 P0 验收使用静态虚实边界，不依赖 VM 边界上的 LLDP 自动发现。
 
-- Linux VM 外部网卡连接真实交换机网络。
-- Mininet 内部将该网卡接入 `s1`。
+默认边界约定：
+
+- VM 外部数据面网卡加入 Mininet 边界交换机 `s1`。
 - OpenFlow 端口固定为 `s1:20`。
-- 真实主机 `192.168.103.3` 位于真实交换机侧。
+- 真实主机默认验收目标为 `192.168.103.3`。
 
 对应配置：
 
@@ -85,77 +59,49 @@ config/hybrid_acceptance.json
 }
 ```
 
-## 5. 静态虚实边界配置
+## 4. 启动验收环境
 
-编辑：
-
-```bash
-vim config/hybrid_acceptance.json
-```
-
-重点字段：
-
-- `external_interface`：VM 内真实接线网卡名。
-- `hybrid.external_link_ports`：真实网络接入 Mininet 的静态边界端口。
-- `hybrid.gateway_ip`：虚拟主机访问真实网段时使用的网关 IP。
-- `hybrid.real_routes`：真实主机所在网段。
-- `validation.virtual_host_name`：验收源主机，默认 `h28`。
-- `validation.virtual_host_ip`：验收源 IP，默认 `10.0.0.28`。
-- `validation.real_host_ip`：真实侧主机 IP，当前应为 `192.168.103.3`。
-
-## 6. 启动系统
-
-在项目根目录运行：
+进入项目目录：
 
 ```bash
-./acceptance.sh start
+cd /home/hydrate/a/drl-or-s-routing-suite
 ```
 
-脚本会启动：
+启动：
 
-- DRL `path_service`
+```bash
+SUDO_PASSWORD=h PYTHON_BIN=python3 MININET_PYTHON=/usr/bin/python3 ./acceptance.sh start
+```
+
+脚本会读取 `config/hybrid_acceptance.json`，再启动：
+
+- `drl-or-s/path_service.py`
 - `server_agent.py hybrid`
-- 7 个 Ryu 控制器，端口为 `6654,6655,6656,6657,6658,6659,6670`
-- Mininet 军事拓扑
+- Ryu 控制器端口 `6654,6655,6656,6657,6658,6659,6670`
+- Mininet 拓扑，并把 `external_interface` 加入边界 OVS
 
-Mininet/OVS 操作需要 sudo，脚本会在拓扑启动时使用：
-
-```bash
-sudo -E python3 -u testbed/creat_test_topo.py "$EXTERNAL_INTF"
-```
-
-## 7. 健康检查
+## 5. 健康检查
 
 运行：
 
 ```bash
-./acceptance.sh health
+SUDO_PASSWORD=h PYTHON_BIN=python3 ./acceptance.sh health
 ```
 
-检查内容：
+健康检查现在会验证配置与运行时状态是否一致，包括：
 
-- `server_agent` 端口 `6001`
-- Web 端口 `6009`
-- `path_service` 端口 `8889`
-- Ryu 端口 `6654,6655,6656,6657,6658,6659,6670`
-- 禁用端口 `6671` 不应监听
-- Web API 状态
-- 最近严重日志
-- `h28 -> 192.168.103.3` warmup 和 verification ping
-- `s28/s1` 双向虚实流表
+- `external_interface` 是否存在。
+- `external_interface` 是否没有承载默认路由。
+- 该网口是否实际加入配置中的 OVS 边界交换机，例如 `s1`。
+- OVS 中该网口的 `ofport` 是否等于配置中的边界端口，例如 `20`。
+- 控制面端口、Web API、拓扑一致性、Mininet 主机路由、ping 和关键流表。
 
-输出结论为：
+这意味着如果配置写成 `eno1`，但运行拓扑实际挂的是 `ens34`，`health` 会失败，而不会再把配置漂移误判为通过。
 
-- `通过`
-- `有风险`
-- `失败`
-
-## 8. 生成验收报告
-
-运行：
+## 6. 生成报告
 
 ```bash
-./acceptance.sh report
+SUDO_PASSWORD=h PYTHON_BIN=python3 ./acceptance.sh report
 ```
 
 报告会生成到：
@@ -164,83 +110,54 @@ sudo -E python3 -u testbed/creat_test_topo.py "$EXTERNAL_INTF"
 reports/acceptance-report-YYYYMMDD-HHMMSS.md
 ```
 
-报告包含配置摘要、端口状态、控制器状态、Web API 状态、虚实边界状态、数据面验证、流表摘要和最终结论。
-
-## 9. 停止系统
-
-运行：
+## 7. 停止环境
 
 ```bash
-./acceptance.sh stop
+SUDO_PASSWORD=h PYTHON_BIN=python3 ./acceptance.sh stop
 ```
 
-脚本会停止控制器和后台进程，并执行：
+脚本会停止项目后台进程并执行 `sudo mn -c` 清理 Mininet/OVS 残留。
 
-```bash
-sudo mn -c
-```
+## 8. 常见问题
 
-该命令用于清理 Mininet/OVS 残留状态。
+### 网口名不对
 
-## 10. 常见故障处理
+现象：
 
-### 网卡名错误
-
-现象：`./acceptance.sh start` 提示外部网卡不存在。
+- `./acceptance.sh start` 提示外部网卡不存在。
+- `./acceptance.sh health` 提示外部网卡未加入预期 OVS 边界。
 
 处理：
 
 ```bash
 ip link
+sudo ovs-vsctl show
+sudo ovs-vsctl port-to-br <EXTERNAL_INTERFACE>
+sudo ovs-vsctl get Interface <EXTERNAL_INTERFACE> ofport
 ```
 
-将正确网卡名写入 `config/hybrid_acceptance.json` 的 `external_interface`。
+把实际数据面网卡写入 `config/hybrid_acceptance.json` 的 `external_interface`。
 
-### sudo 权限缺失
+### 网口承载默认路由
 
-现象：Mininet 或 OVS 操作失败。
+如果 `external_interface` 是默认路由出口，脚本会拒绝启动，因为把管理网卡加入 OVS 可能中断 SSH。
 
-处理：确认当前用户可执行：
+只有在现场确认这是有意设计时，才允许：
 
 ```bash
-sudo mn -c
+export ALLOW_EXTERNAL_INTF_HAS_DEFAULT_ROUTE=1
 ```
 
-### `6671` 异常监听
+### VM 边界 LLDP 不工作
 
-现象：健康检查报告禁用端口 `6671` 正在监听。
-
-处理：停止旧控制器或旧实验进程，确保真实交换机使用的控制器监听端口恢复到 `6654`。
-
-### Ryu 端口缺失
-
-现象：`6654` 到 `6670` 中有端口未监听。
-
-处理：
-
-```bash
-python3 start_controllers_test.py stop
-python3 start_controllers_test.py start -n
-```
-
-然后重新运行 `./acceptance.sh health`。
-
-### 没有 route session
-
-现象：Web 状态为 `partial`，说明控制面可用但还没有最近路径证据。
-
-处理：从 `h28` 访问真实主机 `192.168.103.3`，触发路径计算后再次检查。
-
-### 第一次 ping 失败但第二次 ping 通过
-
-这是可接受现象。第一次 ping 可能用于触发 ARP、路径计算和流表下发，验收以 warmup 后的 verification ping 为准。
-
-### 跨 VM 边界 LLDP 不工作
-
-VM 或宿主机可能拦截 LLDP，导致 Mininet 无法自动发现真实交换机边界链路。本项目 P0 验收不依赖该能力，采用静态虚实边界配置规避：
+VM 或宿主机可能拦截 LLDP，导致 Mininet 无法自动发现真实交换机边界链路。当前 P0 验收不依赖该能力，使用静态虚实边界：
 
 ```json
 "external_link_ports": [
   {"dpid": 1, "port": 20}
 ]
 ```
+
+### 第一次 ping 失败但第二次通过
+
+第一次 ping 可能只触发 ARP、路径计算和流表下发。验收以 warmup 后的 verification ping 为准。

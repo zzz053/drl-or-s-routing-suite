@@ -4,6 +4,9 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 COMMAND="${1:-}"
+if [ "$#" -gt 0 ]; then
+  shift
+fi
 CONFIG="${ACCEPTANCE_CONFIG:-config/hybrid_acceptance.json}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 MININET_PYTHON="${MININET_PYTHON:-python3}"
@@ -22,7 +25,7 @@ else
 fi
 
 usage() {
-  echo "Usage: $0 {start|stop|health|report}"
+  echo "Usage: $0 {start|stop|health|audit|load|report}"
   echo "Config: $CONFIG"
 }
 
@@ -105,6 +108,13 @@ wait_for_mininet_routes() {
 ensure_external_interface() {
   if command -v ip >/dev/null 2>&1; then
     ip link show "$EXTERNAL_INTF" >/dev/null
+    if ip route show default 2>/dev/null | grep -Eq " dev ${EXTERNAL_INTF}( |$)"; then
+      if [ "${ALLOW_EXTERNAL_INTF_HAS_DEFAULT_ROUTE:-0}" != "1" ]; then
+        echo "refusing to use external interface $EXTERNAL_INTF because it carries the default route" >&2
+        echo "Use a dedicated data-plane NIC, or set ALLOW_EXTERNAL_INTF_HAS_DEFAULT_ROUTE=1 if this is intentional." >&2
+        return 1
+      fi
+    fi
   else
     echo "warning: ip command not found; skip external interface existence check"
   fi
@@ -192,6 +202,12 @@ case "$COMMAND" in
     ;;
   health)
     "$PYTHON_BIN" tools/acceptance_health.py --config "$CONFIG"
+    ;;
+  audit)
+    "$PYTHON_BIN" tools/acceptance_feature_audit.py
+    ;;
+  load)
+    "$PYTHON_BIN" tools/mininet_load_test.py "$@"
     ;;
   report)
     "$PYTHON_BIN" tools/generate_acceptance_report.py --config "$CONFIG"

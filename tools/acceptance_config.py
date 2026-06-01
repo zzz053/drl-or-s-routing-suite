@@ -10,7 +10,6 @@ import sys
 
 DEFAULT_CONTROLLERS = {
     "ports": [6654, 6655, 6656, 6657, 6658, 6659, 6670],
-    "forbidden_ports": [6671],
 }
 DEFAULT_HYBRID = {
     "gateway_ip": "10.0.0.254",
@@ -90,10 +89,7 @@ def load_acceptance_config(path="config/hybrid_acceptance.json"):
         _require_int(port, f"controllers.ports[{idx}]")
         for idx, port in enumerate(controllers.get("ports", []))
     ]
-    controllers["forbidden_ports"] = [
-        _require_int(port, f"controllers.forbidden_ports[{idx}]")
-        for idx, port in enumerate(controllers.get("forbidden_ports", []))
-    ]
+    controllers.pop("forbidden_ports", None)
     if not controllers["ports"]:
         raise AcceptanceConfigError("controllers.ports must be a non-empty list")
     config["controllers"] = controllers

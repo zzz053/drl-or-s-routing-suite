@@ -7,7 +7,7 @@ def test_render_report_includes_required_acceptance_sections():
         "status": "risk",
         "config": {
             "external_interface": "eno1",
-            "controllers": {"ports": [6654], "forbidden_ports": [6671]},
+            "controllers": {"ports": [6654]},
             "hybrid": {
                 "external_link_ports": [{"dpid": 1, "port": 20}],
                 "gateway_ip": "10.0.0.254",
@@ -21,6 +21,16 @@ def test_render_report_includes_required_acceptance_sections():
         },
         "control_checks": [CheckResult("server_agent", "pass", "6001 listening").to_dict()],
         "data_checks": [CheckResult("verification_ping", "risk", "sudo unavailable").to_dict()],
+        "feature_audit": {
+            "status": "pass",
+            "features": [
+                {
+                    "name": "web_route_session_highlight",
+                    "status": "pass",
+                    "message": "Web 路径会话点击高亮能力存在",
+                }
+            ],
+        },
     }
 
     report = render_report(health)
@@ -31,6 +41,8 @@ def test_render_report_includes_required_acceptance_sections():
     assert "## 控制器状态" in report
     assert "## Web API 状态" in report
     assert "## 虚实边界状态" in report
+    assert "## 项目功能覆盖" in report
+    assert "web_route_session_highlight" in report
     assert "## 数据面验证" in report
     assert "## 最近严重日志" in report
     assert "最终结论：有风险" in report
