@@ -64,6 +64,14 @@ def test_topology_installs_real_subnet_routes_via_virtual_gateway():
     assert "HYBRID_REAL_ROUTES" in text
 
 
+def test_topology_supports_noninteractive_hold_mode_for_acceptance():
+    text = (ROOT / "testbed" / "creat_test_topo.py").read_text(encoding="utf-8")
+
+    assert "hold=False" in text
+    assert "while True:" in text
+    assert "--hold" in text
+
+
 def test_drl_assets_are_packaged_for_standalone_delivery():
     model_dir = ROOT / "drl-or-s" / "model" / "Military_mininet"
     topology_dir = ROOT / "drl-or-s" / "topology" / "Military"

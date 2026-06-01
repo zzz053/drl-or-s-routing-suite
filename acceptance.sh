@@ -136,7 +136,7 @@ start_suite() {
     wait_for_port 127.0.0.1 "$port" 90
   done
 
-  (tail -f /dev/null | sudo_cmd -E "$MININET_PYTHON" -u testbed/creat_test_topo.py "$EXTERNAL_INTF") > logs/mininet_topology.log 2>&1 &
+  sudo_cmd -E "$MININET_PYTHON" -u testbed/creat_test_topo.py "$EXTERNAL_INTF" --hold > logs/mininet_topology.log 2>&1 &
   write_pid mininet_topology "$!"
   wait_for_mininet_routes "$VALIDATION_VIRTUAL_HOST_NAME" "$HYBRID_REAL_ROUTES" 240
 
