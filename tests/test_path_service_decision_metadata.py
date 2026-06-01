@@ -32,3 +32,20 @@ def test_decision_metadata_helper_marks_fallback():
     assert result["decision_source"] == "dijkstra"
     assert result["model_used"] is False
     assert result["fallback_reason"] == "out_of_drl_range"
+
+
+def test_service_starts_in_dijkstra_only_mode_when_drl_runtime_unavailable(monkeypatch):
+    module = load_path_service_module()
+    monkeypatch.setattr(module, "torch", None)
+    monkeypatch.setattr(module, "Data", None)
+    monkeypatch.setattr(module, "NetEnv", None)
+    monkeypatch.setattr(module, "Policy", None)
+    monkeypatch.setattr(module, "NET_ENV_IMPORT_ERROR", ImportError("missing torch runtime"))
+
+    service = module.DRLPathService(topo_name="Abi", port=9999)
+    result = service.compute_path(1, 3, topo_edges=[(1, 2), (2, 3), (1, 4)])
+
+    assert result["path"] == [1, 2, 3]
+    assert result["decision_source"] == "dijkstra"
+    assert result["model_used"] is False
+    assert result["fallback_reason"] == "drl_runtime_unavailable"
