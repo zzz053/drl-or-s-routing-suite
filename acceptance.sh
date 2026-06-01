@@ -97,7 +97,9 @@ start_suite() {
 
   nohup setsid "$PYTHON_BIN" -u start_controllers_test.py start -n > logs/controllers.log 2>&1 &
   write_pid start_controllers "$!"
-  sleep 1
+  for port in $CONTROLLER_PORTS; do
+    wait_for_port 127.0.0.1 "$port" 90
+  done
 
   (tail -f /dev/null | sudo_cmd -E "$MININET_PYTHON" -u testbed/creat_test_topo.py "$EXTERNAL_INTF") > logs/mininet_topology.log 2>&1 &
   write_pid mininet_topology "$!"
@@ -124,9 +126,9 @@ stop_suite() {
     done
   fi
 
-  pkill -f "server_agent.py" 2>/dev/null || true
-  pkill -f "drl-or-s/path_service.py" 2>/dev/null || true
-  pkill -f "testbed/creat_test_topo.py" 2>/dev/null || true
+  pkill -f "[s]erver_agent.py" 2>/dev/null || true
+  pkill -f "[d]rl-or-s/path_service.py" 2>/dev/null || true
+  pkill -f "[t]estbed/creat_test_topo.py" 2>/dev/null || true
 
   if command -v sudo >/dev/null 2>&1; then
     sudo_cmd mn -c || true

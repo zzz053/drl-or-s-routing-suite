@@ -69,6 +69,7 @@ def test_build_runtime_env_maps_config_to_existing_variables():
 
     assert env["EXTERNAL_INTF"] == "eno1"
     assert env["EXTERNAL_LINK_PORTS"] == "1:20"
+    assert env["CONTROLLER_PORTS"] == "6654 6655 6656 6657 6658 6659 6670"
     assert env["HYBRID_GATEWAY_IP"] == "10.0.0.254"
     assert env["HYBRID_GATEWAY_MAC"] == "02:00:00:00:fe:01"
     assert env["HYBRID_REAL_ROUTES"] == "192.168.103.0/24"
