@@ -13,6 +13,7 @@ import os
 import networkx as nx
 import traceback
 from flask import Flask
+from werkzeug.serving import make_server
 try:
     from flask_cors import CORS
 except ImportError:
@@ -101,6 +102,7 @@ class ServerAgent:
         self.port = port
         self.route_mode = route_mode or DRL_ROUTE_MODE
         self.sock = None
+        self.web_http_server = None
         self.is_running = False
         self.clients = {}  # {client_addr: (socket, thread)}
         self.client_last_heartbeat = {}  # {client_addr: last_heartbeat_timestamp}
@@ -292,46 +294,40 @@ class ServerAgent:
         )
 
     def start_web_server(self):
-        """在单独的线程中启动 Flask 服务器"""
-        def run_flask():
-            try:
-                # 禁用Flask的默认日志（避免过多输出）
-                import logging
-                log = logging.getLogger('werkzeug')
-                log.setLevel(logging.WARNING)
-                
-                logger.info(f"Flask线程开始运行，准备绑定端口 {WEB_PORT}")
-                print(f"Flask线程开始运行，准备绑定端口 {WEB_PORT}")
-                
-                app.run(host='0.0.0.0', port=WEB_PORT, debug=False, use_reloader=False, threaded=True)
-            except Exception as e:
-                logger.error(f"Flask Web服务器启动失败: {e}")
-                logger.error(traceback.format_exc())
-                print(f"Flask Web服务器启动失败: {e}")
-                print(traceback.format_exc())
-        
-        web_thread = threading.Thread(target=run_flask, daemon=True)
+        """Start the Flask server after binding its port synchronously."""
+        werkzeug_log = logging.getLogger('werkzeug')
+        werkzeug_log.setLevel(logging.WARNING)
+
+        logger.info("Flask server preparing to bind port %s", WEB_PORT)
+        try:
+            self.web_http_server = make_server(
+                '0.0.0.0', WEB_PORT, app, threaded=True)
+        except SystemExit as exc:
+            raise RuntimeError(
+                f"Web port {WEB_PORT} is already in use; "
+                "stop the running suite or set WEB_PORT to another free port."
+            ) from exc
+
+        web_thread = threading.Thread(
+            target=self.web_http_server.serve_forever, daemon=True)
         web_thread.start()
-        
-        # 等待一下让Flask有时间启动
-        time.sleep(1)
-        
-        logger.info(f"Web 服务器线程已启动（端口 {WEB_PORT}）")
-        logger.info(f"访问 http://localhost:{WEB_PORT} 查看拓扑可视化")
-        print(f"Web 服务器线程已启动（端口 {WEB_PORT}）")
-        print(f"访问 http://localhost:{WEB_PORT} 查看拓扑可视化")
+
+        logger.info("Web server started on port %s", WEB_PORT)
+        logger.info("Open http://localhost:%s to view topology", WEB_PORT)
+        print(f"Web server started on port {WEB_PORT}")
+        print(f"Open http://localhost:{WEB_PORT} to view topology")
 
     def start(self):
         """启动服务器"""
         try:
-            # 启动 Web 服务器
-            self.start_web_server()
-            
             # 原有的 TCP 服务器启动代码
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self.sock.bind((self.ip, self.port))
             self.sock.listen(5)
+
+            # Only start Web after the server socket is successfully reserved.
+            self.start_web_server()
             self.is_running = True
             
             logger.info(f"服务器已启动，监听地址: {self.ip}:{self.port}")
@@ -1216,6 +1212,14 @@ class ServerAgent:
         self.clients.clear()
         
         # 关闭服务器套接字
+        if self.web_http_server:
+            try:
+                self.web_http_server.shutdown()
+                self.web_http_server.server_close()
+            except Exception:
+                pass
+            self.web_http_server = None
+
         if self.sock:
             try:
                 self.sock.close()
