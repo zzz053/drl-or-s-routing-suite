@@ -184,6 +184,13 @@ class ServerAgent:
         sid = self._normalize_switch_id(switch_id)
         return list(self.switch_flow_tables.get(sid, []))
 
+    def _upsert_graph_switch_node(self, switch_id):
+        self.G.add_node(
+            switch_id,
+            node_type='switch',
+            flow_table=self._get_switch_flow_table(switch_id)
+        )
+
     def add_manual_flow(self, payload):
         switch_id = self._normalize_switch_id(payload.get('switch_id'))
         out_port = payload.get('out_port')
@@ -749,23 +756,9 @@ class ServerAgent:
                 src = link.get('src')
                 dst = link.get('dst')
                 if src and dst:
-                    # 先确保节点存在并设置正确的node_type（在添加边之前）
-                    # 这样可以避免NetworkX自动创建没有属性的节点
-                    if src not in self.G:
-                        self.G.add_node(src, node_type='switch', flow_table=self._get_switch_flow_table(src))
-                    else:
-                        # 如果节点已存在但没有node_type，则更新它
-                        if 'node_type' not in self.G.nodes[src] or self.G.nodes[src].get('node_type') != 'switch':
-                            self.G.nodes[src]['node_type'] = 'switch'
-                        self.G.nodes[src]['flow_table'] = self._get_switch_flow_table(src)
-                    
-                    if dst not in self.G:
-                        self.G.add_node(dst, node_type='switch', flow_table=self._get_switch_flow_table(dst))
-                    else:
-                        # 如果节点已存在但没有node_type，则更新它
-                        if 'node_type' not in self.G.nodes[dst] or self.G.nodes[dst].get('node_type') != 'switch':
-                            self.G.nodes[dst]['node_type'] = 'switch'
-                        self.G.nodes[dst]['flow_table'] = self._get_switch_flow_table(dst)
+                    # Upsert avoids check-then-get races while topology and flow stats converge.
+                    self._upsert_graph_switch_node(src)
+                    self._upsert_graph_switch_node(dst)
                     
                     # 添加边，可以设置权重等属性
                     delay = link.get('delay', 1)
@@ -827,17 +820,7 @@ class ServerAgent:
                                   edge_type='controller_connection', weight=1)
             
             for switch_id in switches:
-                if switch_id not in self.G:
-                    self.G.add_node(
-                        switch_id,
-                        node_type='switch',
-                        flow_table=self._get_switch_flow_table(switch_id)
-                    )
-                else:
-                    # 如果节点已存在但没有node_type或node_type不正确，则更新它
-                    if 'node_type' not in self.G.nodes[switch_id] or self.G.nodes[switch_id].get('node_type') != 'switch':
-                        self.G.nodes[switch_id]['node_type'] = 'switch'
-                    self.G.nodes[switch_id]['flow_table'] = self._get_switch_flow_table(switch_id)
+                self._upsert_graph_switch_node(switch_id)
                 # 连接交换机到其控制器
                 if not self.G.has_edge(controller_id, switch_id):
                     self.G.add_edge(controller_id, switch_id, 
@@ -861,13 +844,7 @@ class ServerAgent:
                 ip = host.get('ip')
                 
                 if dpid and ip:
-                    # 确保交换机节点存在并设置正确的node_type
-                    if dpid not in self.G:
-                        self.G.add_node(dpid, node_type='switch')
-                    else:
-                        # 如果节点已存在但没有node_type或node_type不正确，则更新它
-                        if 'node_type' not in self.G.nodes[dpid] or self.G.nodes[dpid].get('node_type') != 'switch':
-                            self.G.nodes[dpid]['node_type'] = 'switch'
+                    self._upsert_graph_switch_node(dpid)
                     
                     # 添加主机节点并设置正确的node_type
                     if ip not in self.G:

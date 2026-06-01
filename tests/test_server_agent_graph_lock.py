@@ -12,3 +12,11 @@ def test_update_graph_uses_dedicated_reentrant_lock():
     assert "graph_lock = getattr(self, 'graph_lock', None)" in source
     assert "with graph_lock:" in source
     assert "_graph_update_locked" in source
+
+
+def test_update_graph_upserts_switch_nodes_without_check_then_get():
+    source = SERVER_AGENT.read_text(encoding="utf-8")
+
+    assert "def _upsert_graph_switch_node" in source
+    assert "self._upsert_graph_switch_node(src)" in source
+    assert "self._upsert_graph_switch_node(dst)" in source
