@@ -2,6 +2,7 @@ from tools.acceptance_health import (
     CheckResult,
     classify_health,
     command_contains_route,
+    _find_mininet_host_pid,
     flow_output_has_bidirectional_flows,
     run_command,
 )
@@ -32,6 +33,19 @@ def test_command_contains_route_matches_real_subnet_gateway():
     output = "192.168.103.0/24 via 10.0.0.254 dev h28-eth0\n"
 
     assert command_contains_route(output, "192.168.103.0/24", "10.0.0.254")
+
+
+def test_find_mininet_host_pid_ignores_probe_command_and_selects_namespace_shell():
+    def fake_runner(command, timeout=3):
+        assert command[:3] == ["ps", "-eo", "pid=,args="]
+        return 0, "\n".join([
+            "24790 bash -c pgrep -f mininet:h28",
+            "20370 bash --norc --noediting -is mininet:h28",
+        ])
+
+    pid, _ = _find_mininet_host_pid("h28", runner=fake_runner)
+
+    assert pid == "20370"
 
 
 def test_flow_output_has_bidirectional_idle_timeout_flows():

@@ -75,7 +75,7 @@ wait_for_mininet_routes() {
   start_time="$(date +%s)"
   while true; do
     local pid
-    pid="$(pgrep -f "mininet:${host_name}" | head -n 1 || true)"
+    pid="$(ps -eo pid=,args= | awk -v pattern="bash --norc --noediting -is mininet:${host_name}" 'index($0, pattern) {print $1; exit}' || true)"
     if [ -n "$pid" ]; then
       local route_output
       route_output="$(sudo_cmd mnexec -a "$pid" ip route 2>/dev/null || true)"

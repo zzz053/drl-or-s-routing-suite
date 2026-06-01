@@ -153,11 +153,14 @@ def check_recent_logs(log_dir=LOG_DIR, max_lines=400):
 
 
 def _find_mininet_host_pid(host_name, runner=run_command):
-    code, output = runner(["pgrep", "-f", f"mininet:{host_name}"], timeout=3)
+    code, output = runner(["ps", "-eo", "pid=,args="], timeout=3)
     if code != 0:
         return None, output
     for line in output.splitlines():
-        pid = line.strip()
+        stripped = line.strip()
+        if f"bash --norc --noediting -is mininet:{host_name}" not in stripped:
+            continue
+        pid = stripped.split(None, 1)[0]
         if pid.isdigit():
             return pid, output
     return None, output
