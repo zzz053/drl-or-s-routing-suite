@@ -986,6 +986,9 @@ class ServerAgent:
             'confidence': response.get('confidence'),
             'compute_time': response.get('compute_time'),
             'candidate_count': response.get('candidate_count'),
+            'drl_type': response.get('drl_type'),
+            'drl_demand_kbps': response.get('drl_demand_kbps'),
+            'drl_duration': response.get('drl_duration'),
         }
 
     def _choose_final_path_response(self, message, drl_response, fallback_response, route_mode):
@@ -1006,6 +1009,9 @@ class ServerAgent:
                     ),
                     'model_confidence': drl_response.get('model_confidence') if drl_response else None,
                     'drl_compute_time': drl_response.get('drl_compute_time') if drl_response else None,
+                    'drl_type': drl_response.get('drl_type') if drl_response else None,
+                    'drl_demand_kbps': drl_response.get('drl_demand_kbps') if drl_response else None,
+                    'drl_duration': drl_response.get('drl_duration') if drl_response else None,
                 }
             return fallback_response
 
@@ -1019,6 +1025,32 @@ class ServerAgent:
             }
 
         return fallback_response
+
+    def _build_path_service_request(self, message, src_ip, dst_ip, src_dpid, dst_dpid):
+        route_policy = message.get('route_policy', 'shortest_path')
+        candidates = build_k_shortest_candidates(
+            self.G,
+            src_ip,
+            dst_ip,
+            k=DRL_K_CANDIDATES,
+            link_down_set=self.link_down_set,
+            route_policy=route_policy,
+        )
+        return {
+            'type': 'path_request',
+            'src_node': src_dpid,
+            'dst_node': dst_dpid,
+            'topo_edges': build_topo_edges_for_path_service(
+                self.G, self.link_down_set, route_policy),
+            'candidates': candidates,
+            'route_mode': message.get('route_mode', self.route_mode),
+            'route_policy': route_policy,
+            'task_type': message.get('task_type', 'default'),
+            'drl_type': int(message.get('drl_type', 0)),
+            'drl_demand_kbps': int(message.get('drl_demand_kbps', 100)),
+            'drl_duration': int(message.get('drl_duration', 100)),
+            'request_id': "%d-%d-%d" % (src_dpid, dst_dpid, int(time.time() * 1000)),
+        }
 
     def _request_path_from_drl(self, message):
         src_ip = message.get('src')
@@ -1043,31 +1075,13 @@ class ServerAgent:
                     src_ip, src_dpid, dst_ip, dst_dpid
                 )
                 return None
-            candidates = build_k_shortest_candidates(
-                self.G,
-                src_ip,
-                dst_ip,
-                k=DRL_K_CANDIDATES,
-                link_down_set=self.link_down_set,
-                route_policy=route_policy,
-            )
-
-            request = {
-                'type': 'path_request',
-                'src_node': src_dpid,
-                'dst_node': dst_dpid,
-                'topo_edges': build_topo_edges_for_path_service(
-                    self.G, self.link_down_set, route_policy),
-                'candidates': candidates,
-                'route_mode': message.get('route_mode', self.route_mode),
-                'route_policy': route_policy,
-                'task_type': message.get('task_type', 'default'),
-                'request_id': "%d-%d-%d" % (src_dpid, dst_dpid, int(time.time() * 1000)),
-            }
+            request = self._build_path_service_request(message, src_ip, dst_ip, src_dpid, dst_dpid)
             logger.info(
-                "[DRL] request_path route_mode=%s src=%s(%s) dst=%s(%s) task=%s policy=%s candidates=%d",
+                "[DRL] request_path route_mode=%s src=%s(%s) dst=%s(%s) task=%s policy=%s drl_type=%s demand=%s duration=%s candidates=%d",
                 request['route_mode'], src_ip, src_dpid, dst_ip, dst_dpid,
-                request['task_type'], route_policy, len(candidates)
+                request['task_type'], route_policy, request['drl_type'],
+                request['drl_demand_kbps'], request['drl_duration'],
+                len(request.get('candidates') or [])
             )
             with self.path_service_lock:
                 if self.path_service_sock is None:
@@ -1139,6 +1153,9 @@ class ServerAgent:
                 'fallback_reason': drl_decision.get('fallback_reason'),
                 'model_confidence': drl_decision.get('confidence'),
                 'drl_compute_time': drl_decision.get('compute_time'),
+                'drl_type': drl_decision.get('drl_type', message.get('drl_type')),
+                'drl_demand_kbps': drl_decision.get('drl_demand_kbps', message.get('drl_demand_kbps')),
+                'drl_duration': drl_decision.get('drl_duration', message.get('drl_duration')),
                 'candidate_count': drl_decision.get('candidate_count'),
                 'hop_ports': build_hop_ports(self.G, drl_path),
             }

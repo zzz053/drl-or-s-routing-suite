@@ -1167,7 +1167,12 @@ def get_web_ui_html():
                 const source = item.decision_source || item.path_source || 'unknown';
                 const modelUsed = item.model_used ? 'model' : 'fallback';
                 const reason = item.fallback_reason || '';
-                const decisionText = source + ' / ' + modelUsed + (reason ? ' / ' + reason : '');
+                const drlMeta = (item.drl_type !== undefined && item.drl_type !== null)
+                    ? ' / ' + (item.task_type || 'default') + ' / rtype=' + item.drl_type +
+                        (item.drl_demand_kbps ? ' / demand=' + item.drl_demand_kbps + 'Kbps' : '') +
+                        (item.drl_duration ? ' / duration=' + item.drl_duration : '')
+                    : '';
+                const decisionText = source + ' / ' + modelUsed + drlMeta + (reason ? ' / ' + reason : '');
                 return (
                     '<div class="route-session-item' + activeClass + '" data-session-id="' + sanitizeHtml(item.id) + '">' +
                         '<div class="route-session-path">' + sanitizeHtml(pathText || '-') + '</div>' +

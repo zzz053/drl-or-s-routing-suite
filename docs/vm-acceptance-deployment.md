@@ -123,6 +123,7 @@ SUDO_PASSWORD=h PYTHON_BIN=python3 ./acceptance.sh health
 - `hybrid.external_link_ports`：控制器外部边界端口白名单和 health 校验。
 - `hybrid.external_link_metrics`：外部边界端口的配置型 delay/bandwidth/loss，控制器用于边界链路权重。
 - `hybrid.static_links`：显式注入无法依赖 LLDP 发现的虚实 OpenFlow 交换机链路，例如 `s1:20 <-> 128986965761:11`。
+- `traffic_classes`：按 TCP/UDP 端口区间划分 3 类业务，并导出为 `TRAFFIC_CLASSES_JSON`；控制器据此生成 `task_type`、路由策略、流表优先级和 DRL `rtype/demand/duration`。
 - `load_test.*`：随机打流测试默认参数。
 
 命令行环境里的同名变量会被 JSON 导出的值覆盖。敏感项和本机路径仍不放入 JSON，例如 `SUDO_PASSWORD`、`PYTHON_BIN`、`MININET_PYTHON`、`PATH_SERVICE_PYTHON`。

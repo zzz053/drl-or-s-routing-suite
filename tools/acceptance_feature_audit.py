@@ -42,8 +42,8 @@ FEATURES = [
     {
         "name": "static_hybrid_boundary_config",
         "files": {
-            "tools/acceptance_config.py": ["EXTERNAL_LINK_PORTS", "STATIC_HYBRID_LINKS_JSON", "HYBRID_REAL_ROUTES"],
-            "config/hybrid_acceptance.json": ["external_link_ports", "static_links", "real_routes"],
+            "tools/acceptance_config.py": ["EXTERNAL_LINK_PORTS", "STATIC_HYBRID_LINKS_JSON", "TRAFFIC_CLASSES_JSON", "HYBRID_REAL_ROUTES"],
+            "config/hybrid_acceptance.json": ["external_link_ports", "static_links", "traffic_classes", "real_routes"],
         },
         "message": "静态虚实边界配置和环境变量生成能力存在",
     },

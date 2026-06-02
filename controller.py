@@ -23,6 +23,7 @@ from common_config import (
     HOST_PORT_TASK_RANGES,
     TASK_POLICY_MAP,
     TASK_PRIORITY_MAP,
+    TASK_DRL_MAP,
     ROUTE_FLOW_IDLE_TIMEOUT,
     ROUTE_FLOW_HARD_TIMEOUT,
     FLOW_INSTALL_BARRIER_TIMEOUT,
@@ -356,6 +357,9 @@ class TopoAwareness(app_manager.RyuApp):
             'fallback_reason': meta.get('fallback_reason'),
             'model_confidence': meta.get('model_confidence'),
             'drl_compute_time': meta.get('drl_compute_time'),
+            'drl_type': meta.get('drl_type'),
+            'drl_demand_kbps': meta.get('drl_demand_kbps'),
+            'drl_duration': meta.get('drl_duration'),
             'drl_shadow': meta.get('drl_shadow'),
             'session_key': session_key,
         }
@@ -427,6 +431,7 @@ class TopoAwareness(app_manager.RyuApp):
         src_switch_id = self.get_switch_id_by_ip(src_ip)
         dst_switch_id = self.get_switch_id_by_ip(dst_ip)
         src_port = self.get_switch_port_by_ip(src_ip)
+        drl_meta = self._get_drl_metadata_for_task(task_type)
 
         # 两端主机都在本控制器可见，优先走本地重算。
         if src_switch_id is not None and dst_switch_id is not None and src_port is not None:
@@ -450,6 +455,9 @@ class TopoAwareness(app_manager.RyuApp):
                     'l4_match': l4_fwd,
                     'switch_id': src_switch_id,
                     'in_port': src_port,
+                    'drl_type': drl_meta['drl_type'],
+                    'drl_demand_kbps': drl_meta['drl_demand_kbps'],
+                    'drl_duration': drl_meta['drl_duration'],
                 }, preferred_sid=preferred_sid)
             self.logger.info("链路故障后本地重路由完成: %s -> %s, path=%s", src_ip, dst_ip, path)
             return True
@@ -1412,14 +1420,16 @@ class TopoAwareness(app_manager.RyuApp):
 
     def _get_task_type_by_host_ports(self, sport, dport):
         """根据 TCP/UDP 源/目的端口所在区间映射业务类型（先目的端口，再源端口）。"""
-        if sport is None or dport is None:
+        if sport is None and dport is None:
             return 'default'
-        for lo, hi, task in HOST_PORT_TASK_RANGES:
-            if lo <= dport <= hi:
-                return task
-        for lo, hi, task in HOST_PORT_TASK_RANGES:
-            if lo <= sport <= hi:
-                return task
+        if dport is not None:
+            for lo, hi, task in HOST_PORT_TASK_RANGES:
+                if lo <= dport <= hi:
+                    return task
+        if sport is not None:
+            for lo, hi, task in HOST_PORT_TASK_RANGES:
+                if lo <= sport <= hi:
+                    return task
         return 'default'
 
     def _ofp_match_ip_l4(self, parser, in_port, src_ip, dst_ip, l4_fwd):
@@ -1448,6 +1458,9 @@ class TopoAwareness(app_manager.RyuApp):
 
     def _get_flow_priority_for_task(self, task_type):
         return TASK_PRIORITY_MAP.get(task_type, TASK_PRIORITY_MAP['default'])
+
+    def _get_drl_metadata_for_task(self, task_type):
+        return TASK_DRL_MAP.get(task_type, TASK_DRL_MAP['default'])
     # 检查每个交换机的每个端口连接的主机IP地址，如果找到匹配的IP地址，则返回对应的交换机ID
     # def get_switch_id_by_ip(self, ip_address):
         # sw = self.host_to_sw_port.keys()
@@ -2134,6 +2147,9 @@ class TopoAwareness(app_manager.RyuApp):
                             'fallback_reason': session.get('fallback_reason'),
                             'model_confidence': session.get('model_confidence'),
                             'drl_compute_time': session.get('drl_compute_time'),
+                            'drl_type': session.get('drl_type'),
+                            'drl_demand_kbps': session.get('drl_demand_kbps'),
+                            'drl_duration': session.get('drl_duration'),
                             'drl_shadow': session.get('drl_shadow'),
                             'created_at': session.get('created_at', 0),
                             'updated_at': session.get('updated_at', session.get('created_at', 0)),
@@ -2286,6 +2302,9 @@ class TopoAwareness(app_manager.RyuApp):
                         'fallback_reason': msg.get('fallback_reason'),
                         'model_confidence': msg.get('model_confidence'),
                         'drl_compute_time': msg.get('drl_compute_time'),
+                        'drl_type': msg.get('drl_type'),
+                        'drl_demand_kbps': msg.get('drl_demand_kbps'),
+                        'drl_duration': msg.get('drl_duration'),
                         'drl_shadow': msg.get('drl_shadow'),
                     }, preferred_sid=msg.get('session_id'))
         elif msg.get('status') == 'error':
@@ -2566,6 +2585,7 @@ class TopoAwareness(app_manager.RyuApp):
     def _request_path(self, src_ip, dst_ip, dpid, in_port, msg, task_type='default',
                       route_policy='shortest_path', l4_fwd=None, session_id=None):
         """请求路径计算"""
+        drl_meta = self._get_drl_metadata_for_task(task_type)
         path_msg = {
             "type": "path_request",
             "src": src_ip,
@@ -2573,15 +2593,20 @@ class TopoAwareness(app_manager.RyuApp):
             "switch_id": dpid,
             "in_port": in_port,
             "task_type": task_type,
-            "route_policy": route_policy
+            "route_policy": route_policy,
+            "drl_type": drl_meta["drl_type"],
+            "drl_demand_kbps": drl_meta["drl_demand_kbps"],
+            "drl_duration": drl_meta["drl_duration"]
         }
         if l4_fwd:
             path_msg['l4_match'] = l4_fwd
         if session_id is not None:
             path_msg['session_id'] = int(session_id)
         self.logger.info(
-            "[PathRequest] send_to_root src=%s dst=%s switch=%s in_port=%s task=%s policy=%s session_id=%s",
-            src_ip, dst_ip, dpid, in_port, task_type, route_policy, session_id
+            "[PathRequest] send_to_root src=%s dst=%s switch=%s in_port=%s task=%s policy=%s drl_type=%s demand=%s duration=%s session_id=%s",
+            src_ip, dst_ip, dpid, in_port, task_type, route_policy,
+            drl_meta["drl_type"], drl_meta["drl_demand_kbps"], drl_meta["drl_duration"],
+            session_id
         )
         self._send_to_server(path_msg)
         # self.logger.info(f"已发送路径请求: {src_ip} -> {dst_ip}")

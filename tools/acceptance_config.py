@@ -36,6 +36,38 @@ DEFAULT_LOAD_TEST = {
     "udp": False,
     "bandwidth": "10M",
 }
+DEFAULT_TRAFFIC_CLASSES = [
+    {
+        "name": "task_0",
+        "port_start": 1,
+        "port_end": 5000,
+        "drl_type": 0,
+        "route_policy": "min_delay",
+        "flow_priority": 30,
+        "drl_demand_kbps": 100,
+        "drl_duration": 100,
+    },
+    {
+        "name": "task_1",
+        "port_start": 5001,
+        "port_end": 10000,
+        "drl_type": 1,
+        "route_policy": "max_bandwidth",
+        "flow_priority": 20,
+        "drl_demand_kbps": 1500,
+        "drl_duration": 100,
+    },
+    {
+        "name": "task_2",
+        "port_start": 10001,
+        "port_end": 65535,
+        "drl_type": 2,
+        "route_policy": "hybrid",
+        "flow_priority": 10,
+        "drl_demand_kbps": 1500,
+        "drl_duration": 100,
+    },
+]
 
 
 class AcceptanceConfigError(ValueError):
@@ -172,6 +204,45 @@ def _normalize_static_links(value):
     return links
 
 
+def _normalize_traffic_classes(value):
+    if value in (None, ""):
+        value = DEFAULT_TRAFFIC_CLASSES
+    if not isinstance(value, list) or not value:
+        raise AcceptanceConfigError("traffic_classes must be a non-empty list")
+    classes = []
+    seen_names = set()
+    for idx, item in enumerate(value):
+        item = _require_mapping(item, f"traffic_classes[{idx}]")
+        cls = {
+            "name": _require_string(item.get("name"), f"traffic_classes[{idx}].name"),
+            "port_start": _require_int(item.get("port_start"), f"traffic_classes[{idx}].port_start"),
+            "port_end": _require_int(item.get("port_end"), f"traffic_classes[{idx}].port_end"),
+            "drl_type": _require_int(item.get("drl_type"), f"traffic_classes[{idx}].drl_type"),
+            "route_policy": _require_string(item.get("route_policy"), f"traffic_classes[{idx}].route_policy"),
+            "flow_priority": _require_int(item.get("flow_priority"), f"traffic_classes[{idx}].flow_priority"),
+            "drl_demand_kbps": _require_int(
+                item.get("drl_demand_kbps"),
+                f"traffic_classes[{idx}].drl_demand_kbps",
+            ),
+            "drl_duration": _require_int(item.get("drl_duration"), f"traffic_classes[{idx}].drl_duration"),
+        }
+        if cls["name"] in seen_names:
+            raise AcceptanceConfigError(f"traffic_classes[{idx}].name must be unique")
+        seen_names.add(cls["name"])
+        if cls["port_start"] <= 0 or cls["port_end"] < cls["port_start"] or cls["port_end"] > 65535:
+            raise AcceptanceConfigError(f"traffic_classes[{idx}] ports must be within 1..65535")
+        if cls["drl_type"] not in {0, 1, 2}:
+            raise AcceptanceConfigError(f"traffic_classes[{idx}].drl_type must be one of 0, 1, 2")
+        if cls["flow_priority"] <= 0:
+            raise AcceptanceConfigError(f"traffic_classes[{idx}].flow_priority must be positive")
+        if cls["drl_demand_kbps"] <= 0:
+            raise AcceptanceConfigError(f"traffic_classes[{idx}].drl_demand_kbps must be positive")
+        if cls["drl_duration"] <= 0:
+            raise AcceptanceConfigError(f"traffic_classes[{idx}].drl_duration must be positive")
+        classes.append(cls)
+    return classes
+
+
 def _load_json(path):
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -270,6 +341,8 @@ def load_acceptance_config(path="config/hybrid_acceptance.json"):
     )
     config["hybrid"] = hybrid
 
+    config["traffic_classes"] = _normalize_traffic_classes(raw.get("traffic_classes"))
+
     load_test = dict(DEFAULT_LOAD_TEST)
     load_test.update(_require_mapping(raw.get("load_test", {}), "load_test"))
     load_test["flows"] = _require_int(load_test.get("flows"), "load_test.flows")
@@ -328,6 +401,14 @@ def format_static_hybrid_links(config):
     )
 
 
+def format_traffic_classes(config):
+    return json.dumps(
+        config.get("traffic_classes", DEFAULT_TRAFFIC_CLASSES),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
 def build_runtime_env(config):
     runtime = config["runtime"]
     hybrid = config["hybrid"]
@@ -350,6 +431,7 @@ def build_runtime_env(config):
         "VIRTUAL_SWITCH_DPID_MAX": str(hybrid["virtual_switch_dpid_max"]),
         "EXTERNAL_LINK_METRICS_JSON": format_external_link_metrics(config),
         "STATIC_HYBRID_LINKS_JSON": format_static_hybrid_links(config),
+        "TRAFFIC_CLASSES_JSON": format_traffic_classes(config),
         "LOAD_TEST_FLOWS": str(load_test["flows"]),
         "LOAD_TEST_DURATION": str(load_test["duration"]),
         "LOAD_TEST_PARALLEL": str(load_test["parallel"]),

@@ -6,6 +6,7 @@ from tools.acceptance_config import (
     AcceptanceConfigError,
     build_runtime_env,
     format_external_link_ports,
+    format_traffic_classes,
     load_acceptance_config,
 )
 
@@ -63,6 +64,38 @@ def valid_config():
                 }
             ],
         },
+        "traffic_classes": [
+            {
+                "name": "task_0",
+                "port_start": 1,
+                "port_end": 5000,
+                "drl_type": 0,
+                "route_policy": "min_delay",
+                "flow_priority": 30,
+                "drl_demand_kbps": 100,
+                "drl_duration": 100,
+            },
+            {
+                "name": "task_1",
+                "port_start": 5001,
+                "port_end": 10000,
+                "drl_type": 1,
+                "route_policy": "max_bandwidth",
+                "flow_priority": 20,
+                "drl_demand_kbps": 1500,
+                "drl_duration": 100,
+            },
+            {
+                "name": "task_2",
+                "port_start": 10001,
+                "port_end": 65535,
+                "drl_type": 2,
+                "route_policy": "hybrid",
+                "flow_priority": 10,
+                "drl_demand_kbps": 1500,
+                "drl_duration": 100,
+            },
+        ],
         "load_test": {
             "flows": 30,
             "duration": 15,
@@ -91,6 +124,9 @@ def test_load_acceptance_config_validates_and_preserves_required_values(tmp_path
     assert cfg["hybrid"]["external_link_metrics"][0]["delay_ms"] == 2.5
     assert cfg["hybrid"]["static_links"][0]["dst_dpid"] == 128986965761
     assert cfg["hybrid"]["static_links"][0]["dst_port"] == 11
+    assert cfg["traffic_classes"][1]["name"] == "task_1"
+    assert cfg["traffic_classes"][1]["drl_type"] == 1
+    assert cfg["traffic_classes"][1]["route_policy"] == "max_bandwidth"
     assert cfg["load_test"]["flows"] == 30
     assert "forbidden_ports" not in cfg["controllers"]
     assert cfg["validation"]["real_host_ip"] == "192.168.103.3"
@@ -144,12 +180,64 @@ def test_build_runtime_env_maps_config_to_existing_variables():
     assert '"delay_ms":2.5' in env["EXTERNAL_LINK_METRICS_JSON"]
     assert '"src_dpid":1' in env["STATIC_HYBRID_LINKS_JSON"]
     assert '"dst_dpid":128986965761' in env["STATIC_HYBRID_LINKS_JSON"]
+    assert '"name":"task_1"' in env["TRAFFIC_CLASSES_JSON"]
+    assert '"drl_type":1' in env["TRAFFIC_CLASSES_JSON"]
+    assert '"drl_demand_kbps":1500' in env["TRAFFIC_CLASSES_JSON"]
     assert env["LOAD_TEST_FLOWS"] == "30"
     assert env["LOAD_TEST_PARALLEL"] == "6"
     assert env["VALIDATION_VIRTUAL_HOST_NAME"] == "h28"
     assert env["HYBRID_GATEWAY_IP"] == "10.0.0.254"
     assert env["HYBRID_GATEWAY_MAC"] == "02:00:00:00:fe:01"
     assert env["HYBRID_REAL_ROUTES"] == "192.168.103.0/24"
+
+
+def test_format_traffic_classes_uses_default_three_class_drl_mapping_when_missing(tmp_path):
+    data = valid_config()
+    data.pop("traffic_classes")
+
+    cfg = load_acceptance_config(write_config(tmp_path, data))
+
+    assert cfg["traffic_classes"] == [
+        {
+            "name": "task_0",
+            "port_start": 1,
+            "port_end": 5000,
+            "drl_type": 0,
+            "route_policy": "min_delay",
+            "flow_priority": 30,
+            "drl_demand_kbps": 100,
+            "drl_duration": 100,
+        },
+        {
+            "name": "task_1",
+            "port_start": 5001,
+            "port_end": 10000,
+            "drl_type": 1,
+            "route_policy": "max_bandwidth",
+            "flow_priority": 20,
+            "drl_demand_kbps": 1500,
+            "drl_duration": 100,
+        },
+        {
+            "name": "task_2",
+            "port_start": 10001,
+            "port_end": 65535,
+            "drl_type": 2,
+            "route_policy": "hybrid",
+            "flow_priority": 10,
+            "drl_demand_kbps": 1500,
+            "drl_duration": 100,
+        },
+    ]
+    assert '"name":"task_2"' in format_traffic_classes(cfg)
+
+
+def test_load_acceptance_config_rejects_invalid_drl_type(tmp_path):
+    data = valid_config()
+    data["traffic_classes"][0]["drl_type"] = 3
+
+    with pytest.raises(AcceptanceConfigError, match="traffic_classes\\[0\\].drl_type"):
+        load_acceptance_config(write_config(tmp_path, data))
 
 
 def test_load_acceptance_config_rejects_mismatched_external_switch_and_link_port(tmp_path):

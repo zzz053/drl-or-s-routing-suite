@@ -410,15 +410,20 @@ class DRLPathService(object):
 
         return path
 
-    def compute_path_with_drl(self, src_node, dst_node):
+    def compute_path_with_drl(self, src_node, dst_node, rtype=0, demand=100, duration=50):
         """使用 DRL 模型计算路径（0-based 索引）"""
         self._last_model_action_used = False
+        request, obses = self._reset_env_with_request(
+            src_node,
+            dst_node,
+            rtype=rtype,
+            demand=demand,
+            duration=duration,
+        )
         if self.actor_critic is None:
             return self.env.calcSHR(src_node, dst_node)
 
         try:
-            request, obses = self._reset_env_with_request(src_node, dst_node, rtype=0, demand=100, duration=50)
-
             path = [src_node]
             curr_path = [0] * self.num_node
             curr_path[src_node] = 1
@@ -512,7 +517,7 @@ class DRLPathService(object):
     # ============================================================
     #  对外接口：统一路径计算入口
     # ============================================================
-    def compute_path(self, src_node, dst_node, topo_edges=None):
+    def compute_path(self, src_node, dst_node, topo_edges=None, drl_type=0, drl_demand_kbps=100, drl_duration=50):
         """
         对外接口：统一路径计算
         
@@ -541,7 +546,13 @@ class DRLPathService(object):
                 dst_0based = dst_node - 1
 
                 if self.actor_critic is not None:
-                    path_0based = self.compute_path_with_drl(src_0based, dst_0based)
+                    path_0based = self.compute_path_with_drl(
+                        src_0based,
+                        dst_0based,
+                        rtype=drl_type,
+                        demand=drl_demand_kbps,
+                        duration=drl_duration,
+                    )
                     decision_source = "drl_model" if self._last_model_action_used else "drl_shr"
                     fallback_reason = None if self._last_model_action_used else "model_action_not_used"
                     model_used = self._last_model_action_used
@@ -634,6 +645,9 @@ class DRLPathService(object):
                             topo_edges = request.get("topo_edges", None)
                             candidates = request.get("candidates") or []
                             route_mode = request.get("route_mode", "unknown")
+                            drl_type = int(request.get("drl_type", 0))
+                            drl_demand_kbps = int(request.get("drl_demand_kbps", 100))
+                            drl_duration = int(request.get("drl_duration", 100))
 
                             print("[请求] %d -> %d (ID: %s, topo_edges: %s)"
                                   % (src_node, dst_node, request_id,
@@ -643,8 +657,18 @@ class DRLPathService(object):
                                      request.get("task_type", "default"),
                                      request.get("route_policy", "shortest_path")))
 
+                            print("[DRL_SERVICE] task=%s drl_type=%s demand=%s duration=%s"
+                                  % (request.get("task_type", "default"),
+                                     drl_type, drl_demand_kbps, drl_duration))
                             start_time = time.time()
-                            decision = self.compute_path(src_node, dst_node, topo_edges)
+                            decision = self.compute_path(
+                                src_node,
+                                dst_node,
+                                topo_edges,
+                                drl_type=drl_type,
+                                drl_demand_kbps=drl_demand_kbps,
+                                drl_duration=drl_duration,
+                            )
                             elapsed = time.time() - start_time
                             path = decision.get("path") if isinstance(decision, dict) else decision
 
@@ -659,6 +683,9 @@ class DRLPathService(object):
                                 "fallback_reason": decision.get("fallback_reason"),
                                 "confidence": decision.get("confidence"),
                                 "candidate_count": len(candidates),
+                                "drl_type": drl_type,
+                                "drl_demand_kbps": drl_demand_kbps,
+                                "drl_duration": drl_duration,
                             }
                             if not path:
                                 response["error"] = "no path"

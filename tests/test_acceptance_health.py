@@ -249,6 +249,18 @@ def test_check_runtime_environment_detects_json_exported_variables():
         "controllers": {"ports": [6654]},
         "validation": {"virtual_host_name": "h28"},
         "external_interface": "ens34",
+        "traffic_classes": [
+            {
+                "name": "task_0",
+                "port_start": 1,
+                "port_end": 5000,
+                "drl_type": 0,
+                "route_policy": "min_delay",
+                "flow_priority": 30,
+                "drl_demand_kbps": 100,
+                "drl_duration": 100,
+            }
+        ],
     }
 
     proc = {
@@ -268,6 +280,7 @@ def test_check_runtime_environment_detects_json_exported_variables():
             "VIRTUAL_SWITCH_DPID_MAX=1000",
             "EXTERNAL_LINK_METRICS_JSON=[]",
             "STATIC_HYBRID_LINKS_JSON=[]",
+            'TRAFFIC_CLASSES_JSON=[{"name":"task_0","port_start":1,"port_end":5000,"drl_type":0,"route_policy":"min_delay","flow_priority":30,"drl_demand_kbps":100,"drl_duration":100}]',
         ])
     }
 

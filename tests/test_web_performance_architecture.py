@@ -210,6 +210,16 @@ def test_route_session_panel_formats_switch_path_labels():
     assert "const pathText = formatRouteSessionPath(item)" in panel_body
 
 
+def test_route_session_panel_shows_drl_service_metadata():
+    text = (ROOT / "web_ui_html.py").read_text(encoding="utf-8")
+    panel_body = text[text.index("function updateRouteSessionsPanel"):text.index("function applyRouteSessionHighlight")]
+
+    assert "item.drl_type" in panel_body
+    assert "item.drl_demand_kbps" in panel_body
+    assert "rtype=" in panel_body
+    assert "Kbps" in panel_body
+
+
 def test_topology_has_auto_arrange_button():
     text = (ROOT / "web_ui_html.py").read_text(encoding="utf-8")
     header_body = text[text.index("<div class=\"header-controls\">"):text.index("</header>")]

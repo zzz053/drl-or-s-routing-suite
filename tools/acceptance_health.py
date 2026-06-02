@@ -355,6 +355,7 @@ def check_runtime_environment(config, runner=run_command):
         "VIRTUAL_SWITCH_DPID_MAX",
         "EXTERNAL_LINK_METRICS_JSON",
         "STATIC_HYBRID_LINKS_JSON",
+        "TRAFFIC_CLASSES_JSON",
     ]
 
     code, output = runner(["ps", "-eo", "pid=,args="], timeout=5)

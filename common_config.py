@@ -97,6 +97,85 @@ def _parse_static_hybrid_links(raw_value):
         })
     return links
 
+
+DEFAULT_TRAFFIC_CLASSES = [
+    {
+        "name": "task_0",
+        "port_start": 1,
+        "port_end": 5000,
+        "drl_type": 0,
+        "route_policy": "min_delay",
+        "flow_priority": 30,
+        "drl_demand_kbps": 100,
+        "drl_duration": 100,
+    },
+    {
+        "name": "task_1",
+        "port_start": 5001,
+        "port_end": 10000,
+        "drl_type": 1,
+        "route_policy": "max_bandwidth",
+        "flow_priority": 20,
+        "drl_demand_kbps": 1500,
+        "drl_duration": 100,
+    },
+    {
+        "name": "task_2",
+        "port_start": 10001,
+        "port_end": 65535,
+        "drl_type": 2,
+        "route_policy": "hybrid",
+        "flow_priority": 10,
+        "drl_demand_kbps": 1500,
+        "drl_duration": 100,
+    },
+]
+
+
+def _parse_traffic_classes(raw_value):
+    if not raw_value:
+        return [dict(item) for item in DEFAULT_TRAFFIC_CLASSES]
+    try:
+        items = json.loads(raw_value)
+    except (TypeError, ValueError):
+        return [dict(item) for item in DEFAULT_TRAFFIC_CLASSES]
+    if not isinstance(items, list) or not items:
+        return [dict(item) for item in DEFAULT_TRAFFIC_CLASSES]
+    out = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        try:
+            name = str(item.get("name", "")).strip()
+            port_start = int(item.get("port_start"))
+            port_end = int(item.get("port_end"))
+            drl_type = int(item.get("drl_type"))
+            flow_priority = int(item.get("flow_priority"))
+            drl_demand_kbps = int(item.get("drl_demand_kbps"))
+            drl_duration = int(item.get("drl_duration"))
+            route_policy = str(item.get("route_policy", "")).strip()
+        except (TypeError, ValueError):
+            continue
+        if not name or not route_policy:
+            continue
+        if port_start <= 0 or port_end < port_start or port_end > 65535:
+            continue
+        if drl_type not in (0, 1, 2):
+            continue
+        if flow_priority <= 0 or drl_demand_kbps <= 0 or drl_duration <= 0:
+            continue
+        out.append({
+            "name": name,
+            "port_start": port_start,
+            "port_end": port_end,
+            "drl_type": drl_type,
+            "route_policy": route_policy,
+            "flow_priority": flow_priority,
+            "drl_demand_kbps": drl_demand_kbps,
+            "drl_duration": drl_duration,
+        })
+    return out or [dict(item) for item in DEFAULT_TRAFFIC_CLASSES]
+
 # 连接根控 server_agent（与 server_agent.py 中 CONTROLLER_IP/CONTROLLER_PORT 对应）
 SERVER_CONFIG = {
     'server_ip': os.environ.get('SERVER_AGENT_IP', '127.0.0.1'),
@@ -149,33 +228,30 @@ HYBRID_GATEWAY_IP = os.environ.get("HYBRID_GATEWAY_IP", "10.0.0.254")
 HYBRID_GATEWAY_MAC = os.environ.get("HYBRID_GATEWAY_MAC", "02:00:00:00:fe:01")
 HYBRID_REAL_ROUTES = os.environ.get("HYBRID_REAL_ROUTES", "192.168.103.0/24")
 
-# 按主机 TCP/UDP 端口区间划分业务（闭区间）。
-# 顺序有意义：对每个包先按目的端口查表，再按源端口；未命中则使用 default。
-# 示例：1–5000 为业务 task_0，5001–10000 为 task_1，其余为 task_2（可按需增删改）。
+TRAFFIC_CLASSES = _parse_traffic_classes(os.environ.get("TRAFFIC_CLASSES_JSON", ""))
+
+# 按主机 TCP/UDP 端口区间划分业务（闭区间）。先匹配目的端口，再匹配源端口。
 HOST_PORT_TASK_RANGES = [
-    (1, 5000, 'task_0'),
-    (5001, 10000, 'task_1'),
-    (10001, 65535, 'task_2'),
+    (item["port_start"], item["port_end"], item["name"])
+    for item in TRAFFIC_CLASSES
 ]
 
-# 业务类型 -> 路由策略（先提供框架，默认沿用 shortest_path）
-TASK_POLICY_MAP = {
-    'task_0': 'shortest_path',
-    'task_1': 'shortest_path',
-    'task_2': 'shortest_path',
-    'task_a': 'shortest_path',
-    'task_b': 'shortest_path',
-    'task_c': 'shortest_path',
-    'default': 'shortest_path',
-}
+TASK_POLICY_MAP = {item["name"]: item["route_policy"] for item in TRAFFIC_CLASSES}
+TASK_POLICY_MAP["default"] = "shortest_path"
 
-# 业务类型 -> 流表优先级（先提供框架）
-TASK_PRIORITY_MAP = {
-    'task_0': 30,
-    'task_1': 20,
-    'task_2': 10,
-    'task_a': 30,
-    'task_b': 20,
-    'task_c': 10,
-    'default': 1,
+TASK_PRIORITY_MAP = {item["name"]: item["flow_priority"] for item in TRAFFIC_CLASSES}
+TASK_PRIORITY_MAP["default"] = 1
+
+TASK_DRL_MAP = {
+    item["name"]: {
+        "drl_type": item["drl_type"],
+        "drl_demand_kbps": item["drl_demand_kbps"],
+        "drl_duration": item["drl_duration"],
+    }
+    for item in TRAFFIC_CLASSES
+}
+TASK_DRL_MAP["default"] = {
+    "drl_type": 0,
+    "drl_demand_kbps": 100,
+    "drl_duration": 100,
 }
