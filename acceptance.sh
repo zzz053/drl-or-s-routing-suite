@@ -31,7 +31,7 @@ usage() {
 
 sudo_cmd() {
   if [ -n "${SUDO_PASSWORD:-}" ]; then
-    printf '%s\n' "$SUDO_PASSWORD" | sudo -S -v
+    printf '%s\n' "$SUDO_PASSWORD" | sudo -S -p '' -v
   fi
   sudo "$@"
 }
@@ -207,6 +207,7 @@ case "$COMMAND" in
     "$PYTHON_BIN" tools/acceptance_feature_audit.py
     ;;
   load)
+    load_acceptance_env
     "$PYTHON_BIN" tools/mininet_load_test.py "$@"
     ;;
   report)

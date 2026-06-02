@@ -135,7 +135,7 @@ def render_report(health_result):
         "",
         "## 数据面输出摘要",
         "",
-        _details_for(data_checks, {"host_route", "warmup_ping", "verification_ping", "ovs_flows"}),
+        _details_for(data_checks, {"host_route", "warmup_ping", "verification_ping", "virtual_real_latency", "ovs_flows"}),
         "",
         "## 最近严重日志",
         "",

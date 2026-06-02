@@ -76,5 +76,7 @@ def test_military_topology_accepts_optional_external_interface_argument():
     text = (ROOT / "testbed" / "creat_test_topo.py").read_text(encoding="utf-8")
 
     assert "external_intf" in text
+    assert 'os.environ.get("EXTERNAL_SWITCH"' in text
+    assert 'os.environ.get("EXTERNAL_PORT"' in text
     assert "add_hardware_interface" in text
     assert "restore_network_config" in text

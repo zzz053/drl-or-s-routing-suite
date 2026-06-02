@@ -955,3 +955,14 @@ P0 验收不强制要求：
 - 配置网口在 OVS 中的 `ofport` 是否等于静态边界端口。
 
 因此，如果 VM 实际运行的是 `ens34 -> s1:port20`，但配置文件写成 `eno1`，健康检查会失败。这用于防止配置漂移被误判为虚实通信通过。
+
+## 22. 虚实链路延迟来源
+
+内部虚拟链路仍可使用控制器 Echo 与 LLDP 估算 delay。虚实边界链路不再把 LLDP 作为验收依据，因为 VM、宿主机、物理交换机或 OpenFlow 域边界都可能影响 LLDP 透传。
+
+虚实边界现在使用两层证据：
+
+- 运行配置：`hybrid.external_link_metrics` 为外部边界端口提供 `delay_ms`、`bandwidth_mbps`、`loss_percent` 和 `source`，控制器在识别到该端口时使用这些 metric 作为边界链路权重。
+- 主动测量：`./acceptance.sh health` 从验证主机主动 ping 真实主机，解析 RTT、丢包率和估算单向延迟，输出 `virtual_real_latency`。该值是端到端测量，不等同于单条物理链路精确时延。
+
+当现场未知真实延迟时，`delay_ms` 可以保留为 `0` 或现场保守估计；最终验收报告应以 `virtual_real_latency` 的实测 RTT 作为展示证据。

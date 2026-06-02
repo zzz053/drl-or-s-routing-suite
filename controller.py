@@ -27,6 +27,7 @@ from common_config import (
     ROUTE_FLOW_HARD_TIMEOUT,
     FLOW_INSTALL_BARRIER_TIMEOUT,
     EXTERNAL_LINK_PORTS,
+    EXTERNAL_LINK_METRICS,
     EXTERNAL_ARP_ALLOWED_PREFIXES,
     VIRTUAL_SWITCH_DPID_MAX,
 )
@@ -777,9 +778,13 @@ class TopoAwareness(app_manager.RyuApp):
         for link in link_to_port.keys():
             (src_dpid, dst_dpid) = link
             try:
-                delay = self._get_delay(src_dpid, dst_dpid)
-                self.topo_inter_link[(src_dpid, dst_dpid)][2] = delay
-                self.graph[src_dpid][dst_dpid]['delay'] = delay
+                link_state = self.topo_inter_link[(src_dpid, dst_dpid)]
+                if self._configured_external_link_metric(src_dpid, link_state[0]):
+                    self._apply_configured_external_link_metric(src_dpid, dst_dpid, link_state)
+                else:
+                    delay = self._get_delay(src_dpid, dst_dpid)
+                    link_state[2] = delay
+                    self.graph[src_dpid][dst_dpid]['delay'] = delay
             except:
                 pass
 
@@ -790,9 +795,13 @@ class TopoAwareness(app_manager.RyuApp):
             # 其中local_dpid是本域交换机，remote_dpid是其他域交换机
             try:
                 # 调用_get_access_delay时，参数顺序是(本域交换机, 其他域交换机)
-                delay = self._get_access_delay(local_dpid, remote_dpid)
-                self.topo_access_link[(local_dpid, remote_dpid)][2] = delay
-                self.graph[local_dpid][remote_dpid]['delay'] = delay
+                link_state = self.topo_access_link[(local_dpid, remote_dpid)]
+                if self._configured_external_link_metric(local_dpid, link_state[0]):
+                    self._apply_configured_external_link_metric(local_dpid, remote_dpid, link_state)
+                else:
+                    delay = self._get_access_delay(local_dpid, remote_dpid)
+                    link_state[2] = delay
+                    self.graph[local_dpid][remote_dpid]['delay'] = delay
             except:
                 pass
 
@@ -1138,6 +1147,22 @@ class TopoAwareness(app_manager.RyuApp):
 
     def is_configured_external_link_port(self, dpid, port):
         return port in EXTERNAL_LINK_PORTS.get(dpid, set())
+
+    def _configured_external_link_metric(self, dpid, port):
+        return EXTERNAL_LINK_METRICS.get((dpid, port))
+
+    def _apply_configured_external_link_metric(self, dpid, dst_dpid, link_state):
+        metric = self._configured_external_link_metric(dpid, link_state[0])
+        if not metric:
+            return
+        link_state[2] = metric["delay_seconds"]
+        link_state[3] = metric["bandwidth_mbps"]
+        link_state[4] = metric["loss_percent"]
+        if self.graph.has_edge(dpid, dst_dpid):
+            self.graph[dpid][dst_dpid]["delay"] = metric["delay_seconds"]
+            self.graph[dpid][dst_dpid]["bw"] = metric["bandwidth_mbps"]
+            self.graph[dpid][dst_dpid]["loss"] = metric["loss_percent"]
+            self.graph[dpid][dst_dpid]["metric_source"] = metric.get("source", "configured")
 
     def remember_external_host_source(self, mac, ip):
         if not remember_external_host_source(self.external_host_sources, mac, ip):
@@ -1721,6 +1746,11 @@ class TopoAwareness(app_manager.RyuApp):
             self.topo_inter_link[(src_dpid, dst_dpid)] = [src_port, 0, 0, 0, 0]
             self._mark_permanent_link_port(src_dpid, src_port)
             self.graph.add_edge(src_dpid, dst_dpid)
+            self._apply_configured_external_link_metric(
+                src_dpid,
+                dst_dpid,
+                self.topo_inter_link[(src_dpid, dst_dpid)],
+            )
             self._remove_access_link_pair(src_dpid, dst_dpid)
 
     def delete_inter_link(self, link):

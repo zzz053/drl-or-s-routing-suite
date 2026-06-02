@@ -6,9 +6,9 @@ from dataclasses import asdict, dataclass
 import json
 import os
 from pathlib import Path
+import re
 import socket
 import subprocess
-from pathlib import Path
 import sys
 import urllib.error
 import urllib.request
@@ -17,7 +17,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from tools.acceptance_config import AcceptanceConfigError, load_acceptance_config
+from tools.acceptance_config import AcceptanceConfigError, build_runtime_env, load_acceptance_config
 from tools.acceptance_feature_audit import audit_features
 from tools.web_consistency_audit import audit_payloads
 
@@ -57,6 +57,32 @@ def command_contains_route(output, cidr, gateway_ip):
         if cidr in line and gateway_ip in line and "via" in line:
             return True
     return False
+
+
+def parse_ping_statistics(output):
+    stats = {}
+    packet_match = re.search(
+        r"(?P<tx>\d+)\s+packets transmitted,\s+(?P<rx>\d+)\s+(?:packets )?received,\s+"
+        r"(?P<loss>[\d.]+)%\s+packet loss",
+        output or "",
+    )
+    if packet_match:
+        stats["transmitted"] = int(packet_match.group("tx"))
+        stats["received"] = int(packet_match.group("rx"))
+        stats["loss_percent"] = float(packet_match.group("loss"))
+
+    rtt_match = re.search(
+        r"(?:rtt|round-trip) min/avg/max/(?:mdev|stddev) = "
+        r"(?P<min>[\d.]+)/(?P<avg>[\d.]+)/(?P<max>[\d.]+)/(?P<mdev>[\d.]+) ms",
+        output or "",
+    )
+    if rtt_match:
+        stats["min_rtt_ms"] = float(rtt_match.group("min"))
+        stats["avg_rtt_ms"] = float(rtt_match.group("avg"))
+        stats["max_rtt_ms"] = float(rtt_match.group("max"))
+        stats["mdev_rtt_ms"] = float(rtt_match.group("mdev"))
+        stats["estimated_one_way_ms"] = stats["avg_rtt_ms"] / 2.0
+    return stats
 
 
 def flow_output_has_bidirectional_flows(outputs, virtual_ip, real_ip):
@@ -235,6 +261,68 @@ def check_feature_audit(feature_audit):
     return [CheckResult("feature_audit", "fail", "项目核心功能覆盖审计失败", "\n".join(failed))]
 
 
+def _find_process_pid(ps_output, needle):
+    for line in (ps_output or "").splitlines():
+        stripped = line.strip()
+        try:
+            pid, args = stripped.split(None, 1)
+        except ValueError:
+            continue
+        if pid.isdigit() and needle in args:
+            return pid
+    return None
+
+
+def _parse_proc_environ(output):
+    env = {}
+    for item in (output or "").split("\0"):
+        if not item or "=" not in item:
+            continue
+        key, value = item.split("=", 1)
+        env[key] = value
+    return env
+
+
+def check_runtime_environment(config, runner=run_command):
+    expected_env = build_runtime_env(config)
+    keys = [
+        "SERVER_AGENT_ROUTE_MODE",
+        "DRL_ROUTE_MODE",
+        "DRL_K_CANDIDATES",
+        "DRL_INFERENCE_TIMEOUT_MS",
+        "DRL_MIN_CONFIDENCE",
+        "ROUTE_FLOW_IDLE_TIMEOUT",
+        "ROUTE_FLOW_HARD_TIMEOUT",
+        "FLOW_INSTALL_BARRIER_TIMEOUT",
+        "EXTERNAL_LINK_PORTS",
+        "EXTERNAL_SWITCH",
+        "EXTERNAL_PORT",
+        "EXTERNAL_ARP_ALLOWED_PREFIXES",
+        "VIRTUAL_SWITCH_DPID_MAX",
+        "EXTERNAL_LINK_METRICS_JSON",
+    ]
+
+    code, output = runner(["ps", "-eo", "pid=,args="], timeout=5)
+    if code != 0:
+        return [CheckResult("runtime_environment", "risk", "无法读取运行进程列表", output)]
+    pid = _find_process_pid(output, "server_agent.py")
+    if not pid:
+        return [CheckResult("runtime_environment", "risk", "未找到 server_agent.py 进程", output)]
+    code, env_output = runner(["cat", f"/proc/{pid}/environ"], timeout=5)
+    if code != 0:
+        return [CheckResult("runtime_environment", "risk", f"无法读取 server_agent.py 进程 {pid} 的环境变量", env_output)]
+    actual = _parse_proc_environ(env_output)
+    mismatches = []
+    for key in keys:
+        expected = str(expected_env.get(key, ""))
+        observed = actual.get(key)
+        if observed != expected:
+            mismatches.append(f"{key}: expected={expected!r}, actual={observed!r}")
+    if mismatches:
+        return [CheckResult("runtime_environment", "fail", "运行进程环境变量与 JSON 配置不一致", "\n".join(mismatches))]
+    return [CheckResult("runtime_environment", "pass", "运行进程环境变量与 JSON 配置一致")]
+
+
 def check_external_interface(config, runner=run_command):
     checks = []
     intf = config.get("external_interface", "")
@@ -348,6 +436,7 @@ def check_data_plane(config, runner=run_command):
         else:
             checks.append(CheckResult("host_route", "pass", "真实网段路由存在", route_output))
 
+    verification_stats = {}
     for label in ("warmup_ping", "verification_ping"):
         code, output = runner(
             ["sudo", "mnexec", "-a", pid, "ping", "-c", "3", "-W", "1", real_ip],
@@ -356,6 +445,26 @@ def check_data_plane(config, runner=run_command):
         status = "pass" if code == 0 else "risk"
         message = f"{label} {'通过' if code == 0 else '未通过'}"
         checks.append(CheckResult(label, status, message, output))
+        if label == "verification_ping":
+            verification_stats = parse_ping_statistics(output)
+
+    if verification_stats.get("received", 0) > 0 and "avg_rtt_ms" in verification_stats:
+        details = (
+            f"loss_percent={verification_stats.get('loss_percent', 0.0):.3f}, "
+            f"min_rtt_ms={verification_stats['min_rtt_ms']:.3f}, "
+            f"avg_rtt_ms={verification_stats['avg_rtt_ms']:.3f}, "
+            f"max_rtt_ms={verification_stats['max_rtt_ms']:.3f}, "
+            f"mdev_rtt_ms={verification_stats['mdev_rtt_ms']:.3f}, "
+            f"estimated_one_way_ms={verification_stats['estimated_one_way_ms']:.3f}"
+        )
+        checks.append(CheckResult("virtual_real_latency", "pass", "虚实端到端延迟已主动测量", details))
+    else:
+        checks.append(CheckResult(
+            "virtual_real_latency",
+            "risk",
+            "未能从 verification ping 解析虚实端到端延迟",
+            json.dumps(verification_stats, ensure_ascii=False),
+        ))
 
     try:
         route_sessions = fetch_web_json("/api/route_sessions")
@@ -398,6 +507,7 @@ def run_health(config_path="config/hybrid_acceptance.json"):
     feature_audit = audit_features()
     control_checks = []
     control_checks.extend(check_feature_audit(feature_audit))
+    control_checks.extend(check_runtime_environment(config))
     control_checks.extend(check_external_interface(config))
     control_checks.extend(check_required_ports(config))
     control_checks.extend(check_web_apis())

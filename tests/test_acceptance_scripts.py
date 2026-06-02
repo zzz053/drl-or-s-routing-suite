@@ -39,7 +39,7 @@ def test_acceptance_script_supports_noninteractive_sudo_password():
 
     assert "SUDO_PASSWORD" in text
     assert "sudo -S" in text
-    assert "sudo -S -v" in text
+    assert "sudo -S -p '' -v" in text
     assert 'sudo "$@"' in text
 
 

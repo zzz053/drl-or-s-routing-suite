@@ -411,13 +411,14 @@ def write_reports(report: dict, report_dir: str | Path) -> tuple[Path, Path]:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Run random iperf3 load tests between Mininet hosts.")
-    parser.add_argument("--flows", type=int, default=20)
-    parser.add_argument("--duration", type=int, default=10)
-    parser.add_argument("--parallel", type=int, default=5)
-    parser.add_argument("--seed", type=int, default=None)
+    default_seed = os.environ.get("LOAD_TEST_SEED") or None
+    parser.add_argument("--flows", type=int, default=int(os.environ.get("LOAD_TEST_FLOWS", "20")))
+    parser.add_argument("--duration", type=int, default=int(os.environ.get("LOAD_TEST_DURATION", "10")))
+    parser.add_argument("--parallel", type=int, default=int(os.environ.get("LOAD_TEST_PARALLEL", "5")))
+    parser.add_argument("--seed", type=int, default=int(default_seed) if default_seed is not None else None)
     parser.add_argument("--base-port", type=int, default=5201)
-    parser.add_argument("--udp", action="store_true")
-    parser.add_argument("--bandwidth", default="10M")
+    parser.add_argument("--udp", action="store_true", default=os.environ.get("LOAD_TEST_UDP", "0") == "1")
+    parser.add_argument("--bandwidth", default=os.environ.get("LOAD_TEST_BANDWIDTH", "10M"))
     parser.add_argument("--include-hosts", default="")
     parser.add_argument("--exclude-hosts", default="")
     parser.add_argument("--report-dir", default="reports")

@@ -11,6 +11,7 @@ Web 监听参数，以及按主机 TCP/UDP 端口区间划分任务类型的映�
 """
 
 import os
+import json
 
 
 def _parse_external_link_ports(raw_value):
@@ -29,6 +30,36 @@ def _parse_external_link_ports(raw_value):
             continue
         ports.setdefault(dpid, set()).add(port)
     return ports
+
+
+def _parse_external_link_metrics(raw_value):
+    metrics = {}
+    if not raw_value:
+        return metrics
+    try:
+        items = json.loads(raw_value)
+    except (TypeError, ValueError):
+        return metrics
+    if not isinstance(items, list):
+        return metrics
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        try:
+            dpid = int(item.get("dpid"))
+            port = int(item.get("port"))
+            delay_ms = float(item.get("delay_ms", 0.0))
+            bandwidth_mbps = float(item.get("bandwidth_mbps", 1.0))
+            loss_percent = float(item.get("loss_percent", 0.0))
+        except (TypeError, ValueError):
+            continue
+        metrics[(dpid, port)] = {
+            "delay_seconds": max(delay_ms, 0.0) / 1000.0,
+            "bandwidth_mbps": max(bandwidth_mbps, 0.000001),
+            "loss_percent": max(loss_percent, 0.0),
+            "source": str(item.get("source", "configured")),
+        }
+    return metrics
 
 # 连接根控 server_agent（与 server_agent.py 中 CONTROLLER_IP/CONTROLLER_PORT 对应）
 SERVER_CONFIG = {
@@ -70,6 +101,7 @@ FLOW_INSTALL_BARRIER_TIMEOUT = float(os.environ.get("FLOW_INSTALL_BARRIER_TIMEOU
 # Comma-separated OpenFlow port whitelist for physical/real-network attachments.
 # Example: EXTERNAL_LINK_PORTS=1:20 marks s1:port20 as a link/external port before LLDP learns it.
 EXTERNAL_LINK_PORTS = _parse_external_link_ports(os.environ.get("EXTERNAL_LINK_PORTS", ""))
+EXTERNAL_LINK_METRICS = _parse_external_link_metrics(os.environ.get("EXTERNAL_LINK_METRICS_JSON", ""))
 EXTERNAL_ARP_ALLOWED_PREFIXES = [
     item.strip()
     for item in os.environ.get("EXTERNAL_ARP_ALLOWED_PREFIXES", "10.0.0.0/24").split(",")

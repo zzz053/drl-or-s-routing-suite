@@ -3,8 +3,11 @@ from tools.acceptance_health import (
     classify_health,
     command_contains_route,
     check_external_interface,
+    check_data_plane,
+    check_runtime_environment,
     _find_mininet_host_pid,
     flow_output_has_bidirectional_flows,
+    parse_ping_statistics,
     switch_names_for_flow_checks,
     run_command,
 )
@@ -35,6 +38,21 @@ def test_command_contains_route_matches_real_subnet_gateway():
     output = "192.168.103.0/24 via 10.0.0.254 dev h28-eth0\n"
 
     assert command_contains_route(output, "192.168.103.0/24", "10.0.0.254")
+
+
+def test_parse_ping_statistics_extracts_loss_and_rtt_ms():
+    output = "\n".join([
+        "3 packets transmitted, 3 received, 0% packet loss, time 2002ms",
+        "rtt min/avg/max/mdev = 1.234/2.500/4.000/0.300 ms",
+    ])
+
+    stats = parse_ping_statistics(output)
+
+    assert stats["transmitted"] == 3
+    assert stats["received"] == 3
+    assert stats["loss_percent"] == 0.0
+    assert stats["avg_rtt_ms"] == 2.5
+    assert stats["estimated_one_way_ms"] == 1.25
 
 
 def test_find_mininet_host_pid_ignores_probe_command_and_selects_namespace_shell():
@@ -153,3 +171,110 @@ def test_check_external_interface_passes_when_configured_interface_matches_stati
         ("external_interface_ovs_bridge", "pass"),
         ("external_interface_ofport", "pass"),
     ]
+
+
+def test_check_data_plane_reports_measured_virtual_real_latency(monkeypatch):
+    config = {
+        "hybrid": {
+            "gateway_ip": "10.0.0.254",
+            "real_routes": ["192.168.103.0/24"],
+            "external_link_ports": [{"dpid": 1, "port": 20}],
+        },
+        "validation": {
+            "virtual_host_name": "h28",
+            "virtual_host_ip": "10.0.0.28",
+            "real_host_ip": "192.168.103.3",
+            "expected_virtual_switch_dpid": 28,
+        },
+    }
+
+    monkeypatch.setattr("tools.acceptance_health.fetch_web_json", lambda path: {"sessions": []})
+
+    def fake_runner(command, timeout=8):
+        if command == ["ps", "-eo", "pid=,args="]:
+            return 0, "20370 bash --norc --noediting -is mininet:h28\n"
+        if command == ["sudo", "mnexec", "-a", "20370", "ip", "route"]:
+            return 0, "192.168.103.0/24 via 10.0.0.254 dev h28-eth0\n"
+        if command == ["sudo", "mnexec", "-a", "20370", "ping", "-c", "3", "-W", "1", "192.168.103.3"]:
+            return 0, "\n".join([
+                "3 packets transmitted, 3 received, 0% packet loss, time 2002ms",
+                "rtt min/avg/max/mdev = 1.000/2.000/3.000/0.100 ms",
+            ])
+        if command == ["sudo", "ovs-ofctl", "dump-flows", "s1"]:
+            return 0, "nw_src=10.0.0.28,nw_dst=192.168.103.3 actions=output:20\n"
+        if command == ["sudo", "ovs-ofctl", "dump-flows", "s28"]:
+            return 0, "nw_src=192.168.103.3,nw_dst=10.0.0.28 actions=output:1\n"
+        raise AssertionError(f"unexpected command: {command}")
+
+    checks = check_data_plane(config, runner=fake_runner)
+
+    latency = next(item for item in checks if item.name == "virtual_real_latency")
+    assert latency.status == "pass"
+    assert "avg_rtt_ms=2.000" in latency.details
+    assert "estimated_one_way_ms=1.000" in latency.details
+
+
+def test_check_runtime_environment_detects_json_exported_variables():
+    config = {
+        "runtime": {
+            "route_mode": "hybrid",
+            "drl_k_candidates": 5,
+            "drl_inference_timeout_ms": 100,
+            "drl_min_confidence": 0.5,
+            "route_flow_idle_timeout": 120,
+            "route_flow_hard_timeout": 0,
+            "flow_install_barrier_timeout": 0.5,
+        },
+        "hybrid": {
+            "external_switch": "s1",
+            "external_port": 20,
+            "external_link_ports": [{"dpid": 1, "port": 20}],
+            "external_arp_allowed_prefixes": ["10.0.0.0/24"],
+            "virtual_switch_dpid_max": 1000,
+            "external_link_metrics": [],
+            "gateway_ip": "10.0.0.254",
+            "gateway_mac": "02:00:00:00:fe:01",
+            "real_routes": ["192.168.103.0/24"],
+        },
+        "load_test": {
+            "flows": 20,
+            "duration": 10,
+            "parallel": 5,
+            "seed": 1,
+            "udp": False,
+            "bandwidth": "10M",
+        },
+        "controllers": {"ports": [6654]},
+        "validation": {"virtual_host_name": "h28"},
+        "external_interface": "ens34",
+    }
+
+    proc = {
+        "123": "\0".join([
+            "SERVER_AGENT_ROUTE_MODE=hybrid",
+            "DRL_ROUTE_MODE=hybrid",
+            "DRL_K_CANDIDATES=5",
+            "DRL_INFERENCE_TIMEOUT_MS=100",
+            "DRL_MIN_CONFIDENCE=0.5",
+            "ROUTE_FLOW_IDLE_TIMEOUT=120",
+            "ROUTE_FLOW_HARD_TIMEOUT=0",
+            "FLOW_INSTALL_BARRIER_TIMEOUT=0.5",
+            "EXTERNAL_LINK_PORTS=1:20",
+            "EXTERNAL_SWITCH=s1",
+            "EXTERNAL_PORT=20",
+            "EXTERNAL_ARP_ALLOWED_PREFIXES=10.0.0.0/24",
+            "VIRTUAL_SWITCH_DPID_MAX=1000",
+            "EXTERNAL_LINK_METRICS_JSON=[]",
+        ])
+    }
+
+    def fake_runner(command, timeout=8):
+        if command == ["ps", "-eo", "pid=,args="]:
+            return 0, "123 python3 server_agent.py hybrid\n"
+        if command == ["cat", "/proc/123/environ"]:
+            return 0, proc["123"]
+        raise AssertionError(f"unexpected command: {command}")
+
+    checks = check_runtime_environment(config, runner=fake_runner)
+
+    assert [(item.name, item.status) for item in checks] == [("runtime_environment", "pass")]

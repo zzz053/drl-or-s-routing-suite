@@ -11,13 +11,23 @@ PID 文件: /tmp/ryu_controllers_test.pid
 """
 
 import sys
+import os
 import time
 from pathlib import Path
 
 from start_controllers import ControllerManager
 
 
-TEST_CONTROLLER_PORTS = [6654, 6655, 6656, 6657, 6658, 6659, 6670]
+def parse_controller_ports(raw_value):
+    ports = []
+    for item in (raw_value or "").replace(",", " ").split():
+        ports.append(int(item))
+    return ports
+
+
+TEST_CONTROLLER_PORTS = parse_controller_ports(
+    os.environ.get("CONTROLLER_PORTS", "6654 6655 6656 6657 6658 6659 6670")
+)
 DEFAULT_USE_TERMINAL = False
 
 

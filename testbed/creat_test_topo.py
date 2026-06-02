@@ -14,8 +14,8 @@ from mininet.log import setLogLevel
 from hybrid_external_interface import add_hardware_interface, restore_network_config
 
 
-EXTERNAL_SWITCH = 's1'
-EXTERNAL_PORT = 20
+EXTERNAL_SWITCH = os.environ.get("EXTERNAL_SWITCH", "s1")
+EXTERNAL_PORT = int(os.environ.get("EXTERNAL_PORT", "20"))
 HYBRID_GATEWAY_IP = os.environ.get("HYBRID_GATEWAY_IP", "10.0.0.254")
 HYBRID_REAL_ROUTES = os.environ.get("HYBRID_REAL_ROUTES", "192.168.103.0/24")
 

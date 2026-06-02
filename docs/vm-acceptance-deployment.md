@@ -94,11 +94,37 @@ SUDO_PASSWORD=h PYTHON_BIN=python3 ./acceptance.sh health
 - `external_interface` 是否没有承载默认路由。
 - 该网口是否实际加入配置中的 OVS 边界交换机，例如 `s1`。
 - OVS 中该网口的 `ofport` 是否等于配置中的边界端口，例如 `20`。
+- `server_agent.py` 进程中的关键环境变量是否与 JSON 导出的运行配置一致。
 - 控制面端口、Web API、拓扑一致性、Mininet 主机路由、ping 和关键流表。
+- `h28 -> 真实主机` 的主动 ping RTT、丢包率和估算单向延迟。
 
 这意味着如果配置写成 `eno1`，但运行拓扑实际挂的是 `ens34`，`health` 会失败，而不会再把配置漂移误判为通过。
 
-## 6. 生成报告
+## 6. JSON 运行配置范围
+
+`config/hybrid_acceptance.json` 会在 `acceptance.sh start` 时导出为运行环境变量。当前 JSON 会驱动：
+
+- `controllers.ports`：控制器启动端口和 health 端口检查。
+- `runtime.route_mode`：`server_agent.py` 路由模式，同时导出 `DRL_ROUTE_MODE`。
+- `runtime.drl_*`：DRL 候选路径数量、推理超时和最小置信度。
+- `runtime.route_flow_*`：自动路径流表 idle/hard timeout。
+- `hybrid.external_switch` / `hybrid.external_port`：Mininet 外部网卡加入哪个 OVS 交换机和 ofport。
+- `hybrid.external_link_ports`：控制器外部边界端口白名单和 health 校验。
+- `hybrid.external_link_metrics`：外部边界端口的配置型 delay/bandwidth/loss，控制器用于边界链路权重。
+- `load_test.*`：随机打流测试默认参数。
+
+命令行环境里的同名变量会被 JSON 导出的值覆盖。敏感项和本机路径仍不放入 JSON，例如 `SUDO_PASSWORD`、`PYTHON_BIN`、`MININET_PYTHON`、`PATH_SERVICE_PYTHON`。
+
+## 7. 虚实延迟测量说明
+
+虚实边界不再依赖 LLDP 作为验收前提。当前有两类延迟来源：
+
+- 运行权重：`hybrid.external_link_metrics` 给控制器提供边界端口的配置型 metric。现场未知时可保留 `delay_ms=0`，避免伪造精确数据。
+- 实测证据：`./acceptance.sh health` 会从 Mininet 验证主机主动 ping 真实主机，解析 `min/avg/max/mdev` RTT 和丢包率，并输出 `virtual_real_latency`。
+
+`virtual_real_latency` 是端到端测量，包含虚拟主机、Mininet、OVS、VM 外部网卡、真实交换机和真实主机路径，不等同于单条物理链路的精确单向时延。报告中的 `estimated_one_way_ms` 只是用 RTT/2 给出的工程估计。
+
+## 8. 生成报告
 
 ```bash
 SUDO_PASSWORD=h PYTHON_BIN=python3 ./acceptance.sh report
@@ -110,7 +136,7 @@ SUDO_PASSWORD=h PYTHON_BIN=python3 ./acceptance.sh report
 reports/acceptance-report-YYYYMMDD-HHMMSS.md
 ```
 
-## 7. 停止环境
+## 9. 停止环境
 
 ```bash
 SUDO_PASSWORD=h PYTHON_BIN=python3 ./acceptance.sh stop
@@ -118,7 +144,7 @@ SUDO_PASSWORD=h PYTHON_BIN=python3 ./acceptance.sh stop
 
 脚本会停止项目后台进程并执行 `sudo mn -c` 清理 Mininet/OVS 残留。
 
-## 8. 常见问题
+## 10. 常见问题
 
 ### 网口名不对
 

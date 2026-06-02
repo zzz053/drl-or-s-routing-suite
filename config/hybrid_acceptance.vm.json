@@ -3,7 +3,18 @@
   "controllers": {
     "ports": [6654, 6655, 6656, 6657, 6658, 6659, 6670]
   },
+  "runtime": {
+    "route_mode": "hybrid",
+    "drl_k_candidates": 5,
+    "drl_inference_timeout_ms": 100,
+    "drl_min_confidence": 0.5,
+    "route_flow_idle_timeout": 120,
+    "route_flow_hard_timeout": 0,
+    "flow_install_barrier_timeout": 0.5
+  },
   "hybrid": {
+    "external_switch": "s1",
+    "external_port": 20,
     "external_link_ports": [
       {
         "dpid": 1,
@@ -12,7 +23,27 @@
     ],
     "gateway_ip": "10.0.0.254",
     "gateway_mac": "02:00:00:00:fe:01",
-    "real_routes": ["192.168.103.0/24"]
+    "real_routes": ["192.168.103.0/24"],
+    "external_arp_allowed_prefixes": ["10.0.0.0/24", "192.168.103.0/24"],
+    "virtual_switch_dpid_max": 1000,
+    "external_link_metrics": [
+      {
+        "dpid": 1,
+        "port": 20,
+        "delay_ms": 0,
+        "bandwidth_mbps": 800,
+        "loss_percent": 0,
+        "source": "configured_default"
+      }
+    ]
+  },
+  "load_test": {
+    "flows": 20,
+    "duration": 10,
+    "parallel": 5,
+    "seed": 1,
+    "udp": false,
+    "bandwidth": "10M"
   },
   "validation": {
     "virtual_host_name": "h28",
