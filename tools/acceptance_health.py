@@ -231,6 +231,60 @@ def check_web_consistency():
     return [CheckResult("web_consistency", "pass", "Web 拓扑和路径会话一致", details)]
 
 
+def _edge_endpoint(edge, *names):
+    for name in names:
+        if name in edge:
+            return edge.get(name)
+    return None
+
+
+def _edge_src_port(edge):
+    data = edge.get("data") if isinstance(edge.get("data"), dict) else edge
+    return data.get("src_port")
+
+
+def check_static_hybrid_links(config):
+    links = (config.get("hybrid", {}) or {}).get("static_links", []) or []
+    if not links:
+        return [CheckResult("static_hybrid_links", "pass", "未配置静态虚实链路")]
+    try:
+        graph = fetch_web_json("/api/graph?include_flows=0")
+    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        return [CheckResult("static_hybrid_links", "fail", "静态虚实链路检查不可用", str(exc))]
+
+    edges = graph.get("edges") or []
+    missing = []
+
+    def has_edge(src, dst, port):
+        for edge in edges:
+            edge_src = _edge_endpoint(edge, "source", "from", "src")
+            edge_dst = _edge_endpoint(edge, "target", "to", "dst")
+            try:
+                if int(edge_src) != int(src) or int(edge_dst) != int(dst):
+                    continue
+            except (TypeError, ValueError):
+                continue
+            try:
+                return int(_edge_src_port(edge)) == int(port)
+            except (TypeError, ValueError):
+                return False
+        return False
+
+    for link in links:
+        src_dpid = link["src_dpid"]
+        src_port = link["src_port"]
+        dst_dpid = link["dst_dpid"]
+        dst_port = link["dst_port"]
+        if not has_edge(src_dpid, dst_dpid, src_port):
+            missing.append(f"{src_dpid}:{src_port} -> {dst_dpid}")
+        if not has_edge(dst_dpid, src_dpid, dst_port):
+            missing.append(f"{dst_dpid}:{dst_port} -> {src_dpid}")
+
+    if missing:
+        return [CheckResult("static_hybrid_links", "fail", "静态虚实链路与运行拓扑不一致", "\n".join(missing))]
+    return [CheckResult("static_hybrid_links", "pass", "静态虚实链路已进入运行拓扑")]
+
+
 def check_recent_logs(log_dir=LOG_DIR, max_lines=400):
     severe = []
     if not log_dir.exists():
@@ -300,6 +354,7 @@ def check_runtime_environment(config, runner=run_command):
         "EXTERNAL_ARP_ALLOWED_PREFIXES",
         "VIRTUAL_SWITCH_DPID_MAX",
         "EXTERNAL_LINK_METRICS_JSON",
+        "STATIC_HYBRID_LINKS_JSON",
     ]
 
     code, output = runner(["ps", "-eo", "pid=,args="], timeout=5)
@@ -512,6 +567,7 @@ def run_health(config_path="config/hybrid_acceptance.json"):
     control_checks.extend(check_required_ports(config))
     control_checks.extend(check_web_apis())
     control_checks.extend(check_web_consistency())
+    control_checks.extend(check_static_hybrid_links(config))
     control_checks.extend(check_recent_logs())
     data_checks = check_data_plane(config)
     status = classify_health(control_checks, data_checks)

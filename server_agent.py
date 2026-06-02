@@ -666,14 +666,13 @@ class ServerAgent:
     def update_graph(self):
         """更新网络图"""
         graph_lock = getattr(self, 'graph_lock', None)
-        if graph_lock is not None and not getattr(self, '_graph_update_locked', False):
+        if graph_lock is not None:
             with graph_lock:
-                self._graph_update_locked = True
-                try:
-                    return self.update_graph()
-                finally:
-                    self._graph_update_locked = False
+                return self._update_graph_locked()
+        return self._update_graph_locked()
 
+    def _update_graph_locked(self):
+        """Rebuild the topology graph while the caller holds graph_lock."""
         # 清空图
         self.G.clear()
         

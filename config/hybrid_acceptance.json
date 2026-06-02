@@ -35,6 +35,18 @@
         "loss_percent": 0,
         "source": "configured_default"
       }
+    ],
+    "static_links": [
+      {
+        "src_dpid": 1,
+        "src_port": 20,
+        "dst_dpid": 128986965761,
+        "dst_port": 11,
+        "delay_ms": 0,
+        "bandwidth_mbps": 800,
+        "loss_percent": 0,
+        "source": "configured_static_boundary"
+      }
     ]
   },
   "load_test": {

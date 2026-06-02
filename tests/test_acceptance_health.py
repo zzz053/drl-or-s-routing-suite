@@ -5,6 +5,7 @@ from tools.acceptance_health import (
     check_external_interface,
     check_data_plane,
     check_runtime_environment,
+    check_static_hybrid_links,
     _find_mininet_host_pid,
     flow_output_has_bidirectional_flows,
     parse_ping_statistics,
@@ -232,6 +233,7 @@ def test_check_runtime_environment_detects_json_exported_variables():
             "external_arp_allowed_prefixes": ["10.0.0.0/24"],
             "virtual_switch_dpid_max": 1000,
             "external_link_metrics": [],
+            "static_links": [],
             "gateway_ip": "10.0.0.254",
             "gateway_mac": "02:00:00:00:fe:01",
             "real_routes": ["192.168.103.0/24"],
@@ -265,6 +267,7 @@ def test_check_runtime_environment_detects_json_exported_variables():
             "EXTERNAL_ARP_ALLOWED_PREFIXES=10.0.0.0/24",
             "VIRTUAL_SWITCH_DPID_MAX=1000",
             "EXTERNAL_LINK_METRICS_JSON=[]",
+            "STATIC_HYBRID_LINKS_JSON=[]",
         ])
     }
 
@@ -278,3 +281,57 @@ def test_check_runtime_environment_detects_json_exported_variables():
     checks = check_runtime_environment(config, runner=fake_runner)
 
     assert [(item.name, item.status) for item in checks] == [("runtime_environment", "pass")]
+
+
+def test_check_static_hybrid_links_requires_configured_bidirectional_edges(monkeypatch):
+    config = {
+        "hybrid": {
+            "static_links": [
+                {
+                    "src_dpid": 1,
+                    "src_port": 20,
+                    "dst_dpid": 128986965761,
+                    "dst_port": 11,
+                }
+            ]
+        }
+    }
+    graph = {
+        "edges": [
+            {"source": 1, "target": 128986965761, "data": {"src_port": 20}},
+            {"source": 128986965761, "target": 1, "data": {"src_port": 11}},
+        ]
+    }
+    monkeypatch.setattr("tools.acceptance_health.fetch_web_json", lambda path: graph)
+
+    checks = check_static_hybrid_links(config)
+
+    assert [(item.name, item.status) for item in checks] == [("static_hybrid_links", "pass")]
+
+
+def test_check_static_hybrid_links_fails_when_reverse_port_is_missing(monkeypatch):
+    config = {
+        "hybrid": {
+            "static_links": [
+                {
+                    "src_dpid": 1,
+                    "src_port": 20,
+                    "dst_dpid": 128986965761,
+                    "dst_port": 11,
+                }
+            ]
+        }
+    }
+    graph = {
+        "edges": [
+            {"source": 1, "target": 128986965761, "data": {"src_port": 20}},
+            {"source": 128986965761, "target": 1, "data": {"src_port": 5}},
+        ]
+    }
+    monkeypatch.setattr("tools.acceptance_health.fetch_web_json", lambda path: graph)
+
+    checks = check_static_hybrid_links(config)
+
+    assert checks[0].name == "static_hybrid_links"
+    assert checks[0].status == "fail"
+    assert "128986965761:11 -> 1" in checks[0].details

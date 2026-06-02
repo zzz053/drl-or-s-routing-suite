@@ -77,6 +77,13 @@ class WebStateStore:
         return payload
 
     def _build_graph_payload(self, include_flows=False):
+        graph_lock = getattr(self.server_agent, 'graph_lock', None)
+        if graph_lock is not None:
+            with graph_lock:
+                return self._build_graph_payload_locked(include_flows=include_flows)
+        return self._build_graph_payload_locked(include_flows=include_flows)
+
+    def _build_graph_payload_locked(self, include_flows=False):
         graph = self.server_agent.G
         nodes_list = []
         for node_id, node_data in graph.nodes(data=True):

@@ -14,6 +14,16 @@ def test_web_state_store_module_exists_and_versions_snapshots():
     assert "get_graph_snapshot" in text
 
 
+def test_web_state_store_reads_networkx_graph_under_server_graph_lock():
+    text = (ROOT / "web_state_store.py").read_text(encoding="utf-8")
+    body = text[text.index("def _build_graph_payload"):text.index("def _json_safe_value")]
+
+    assert "graph_lock = getattr(self.server_agent, 'graph_lock', None)" in body
+    assert "with graph_lock:" in body
+    assert "return self._build_graph_payload_locked" in body
+    assert "def _build_graph_payload_locked" in text
+
+
 def test_web_api_serves_cached_graph_versions():
     text = (ROOT / "web_api.py").read_text(encoding="utf-8")
 

@@ -50,6 +50,18 @@ def valid_config():
                     "source": "configured",
                 }
             ],
+            "static_links": [
+                {
+                    "src_dpid": 1,
+                    "src_port": 20,
+                    "dst_dpid": 128986965761,
+                    "dst_port": 11,
+                    "delay_ms": 2.5,
+                    "bandwidth_mbps": 800,
+                    "loss_percent": 0.0,
+                    "source": "configured_static_link",
+                }
+            ],
         },
         "load_test": {
             "flows": 30,
@@ -77,6 +89,8 @@ def test_load_acceptance_config_validates_and_preserves_required_values(tmp_path
     assert cfg["hybrid"]["external_switch"] == "s1"
     assert cfg["hybrid"]["external_port"] == 20
     assert cfg["hybrid"]["external_link_metrics"][0]["delay_ms"] == 2.5
+    assert cfg["hybrid"]["static_links"][0]["dst_dpid"] == 128986965761
+    assert cfg["hybrid"]["static_links"][0]["dst_port"] == 11
     assert cfg["load_test"]["flows"] == 30
     assert "forbidden_ports" not in cfg["controllers"]
     assert cfg["validation"]["real_host_ip"] == "192.168.103.3"
@@ -128,6 +142,8 @@ def test_build_runtime_env_maps_config_to_existing_variables():
     assert env["EXTERNAL_ARP_ALLOWED_PREFIXES"] == "10.0.0.0/24,192.168.103.0/24"
     assert env["VIRTUAL_SWITCH_DPID_MAX"] == "1000"
     assert '"delay_ms":2.5' in env["EXTERNAL_LINK_METRICS_JSON"]
+    assert '"src_dpid":1' in env["STATIC_HYBRID_LINKS_JSON"]
+    assert '"dst_dpid":128986965761' in env["STATIC_HYBRID_LINKS_JSON"]
     assert env["LOAD_TEST_FLOWS"] == "30"
     assert env["LOAD_TEST_PARALLEL"] == "6"
     assert env["VALIDATION_VIRTUAL_HOST_NAME"] == "h28"
@@ -152,3 +168,5 @@ def test_environment_specific_acceptance_configs_are_valid():
     assert server_cfg["external_interface"] != vm_cfg["external_interface"]
     assert format_external_link_ports(vm_cfg) == "1:20"
     assert format_external_link_ports(server_cfg) == "1:20"
+    assert vm_cfg["hybrid"]["static_links"][0]["dst_dpid"] == 128986965761
+    assert server_cfg["hybrid"]["static_links"][0]["dst_port"] == 11

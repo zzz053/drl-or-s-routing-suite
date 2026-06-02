@@ -53,6 +53,17 @@ ip route show default
   "external_link_ports": [
     {"dpid": 1, "port": 20}
   ],
+  "static_links": [
+    {
+      "src_dpid": 1,
+      "src_port": 20,
+      "dst_dpid": 128986965761,
+      "dst_port": 11,
+      "delay_ms": 0,
+      "bandwidth_mbps": 800,
+      "loss_percent": 0
+    }
+  ],
   "gateway_ip": "10.0.0.254",
   "gateway_mac": "02:00:00:00:fe:01",
   "real_routes": ["192.168.103.0/24"]
@@ -111,6 +122,7 @@ SUDO_PASSWORD=h PYTHON_BIN=python3 ./acceptance.sh health
 - `hybrid.external_switch` / `hybrid.external_port`：Mininet 外部网卡加入哪个 OVS 交换机和 ofport。
 - `hybrid.external_link_ports`：控制器外部边界端口白名单和 health 校验。
 - `hybrid.external_link_metrics`：外部边界端口的配置型 delay/bandwidth/loss，控制器用于边界链路权重。
+- `hybrid.static_links`：显式注入无法依赖 LLDP 发现的虚实 OpenFlow 交换机链路，例如 `s1:20 <-> 128986965761:11`。
 - `load_test.*`：随机打流测试默认参数。
 
 命令行环境里的同名变量会被 JSON 导出的值覆盖。敏感项和本机路径仍不放入 JSON，例如 `SUDO_PASSWORD`、`PYTHON_BIN`、`MININET_PYTHON`、`PATH_SERVICE_PYTHON`。

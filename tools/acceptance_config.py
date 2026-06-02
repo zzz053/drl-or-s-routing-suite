@@ -17,6 +17,7 @@ DEFAULT_HYBRID = {
     "external_arp_allowed_prefixes": ["10.0.0.0/24"],
     "virtual_switch_dpid_max": 1000,
     "external_link_metrics": [],
+    "static_links": [],
 }
 DEFAULT_RUNTIME = {
     "route_mode": "hybrid",
@@ -130,6 +131,47 @@ def _normalize_external_link_metrics(value):
     return metrics
 
 
+def _normalize_static_links(value):
+    if value in (None, ""):
+        return []
+    if not isinstance(value, list):
+        raise AcceptanceConfigError("hybrid.static_links must be a list")
+    links = []
+    for idx, item in enumerate(value):
+        item = _require_mapping(item, f"hybrid.static_links[{idx}]")
+        link = {
+            "src_dpid": _require_int(item.get("src_dpid"), f"hybrid.static_links[{idx}].src_dpid"),
+            "src_port": _require_int(item.get("src_port"), f"hybrid.static_links[{idx}].src_port"),
+            "dst_dpid": _require_int(item.get("dst_dpid"), f"hybrid.static_links[{idx}].dst_dpid"),
+            "dst_port": _require_int(item.get("dst_port"), f"hybrid.static_links[{idx}].dst_port"),
+            "delay_ms": _require_float(item.get("delay_ms", 0.0), f"hybrid.static_links[{idx}].delay_ms"),
+            "bandwidth_mbps": _require_float(
+                item.get("bandwidth_mbps", 1.0),
+                f"hybrid.static_links[{idx}].bandwidth_mbps",
+            ),
+            "loss_percent": _require_float(
+                item.get("loss_percent", 0.0),
+                f"hybrid.static_links[{idx}].loss_percent",
+            ),
+            "source": _require_string(
+                item.get("source", "configured_static_link"),
+                f"hybrid.static_links[{idx}].source",
+            ),
+        }
+        if link["src_dpid"] == link["dst_dpid"]:
+            raise AcceptanceConfigError(f"hybrid.static_links[{idx}] must connect two different dpids")
+        if link["src_port"] <= 0 or link["dst_port"] <= 0:
+            raise AcceptanceConfigError(f"hybrid.static_links[{idx}] ports must be positive")
+        if link["delay_ms"] < 0:
+            raise AcceptanceConfigError(f"hybrid.static_links[{idx}].delay_ms must be non-negative")
+        if link["bandwidth_mbps"] <= 0:
+            raise AcceptanceConfigError(f"hybrid.static_links[{idx}].bandwidth_mbps must be positive")
+        if link["loss_percent"] < 0:
+            raise AcceptanceConfigError(f"hybrid.static_links[{idx}].loss_percent must be non-negative")
+        links.append(link)
+    return links
+
+
 def _load_json(path):
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -223,6 +265,9 @@ def load_acceptance_config(path="config/hybrid_acceptance.json"):
     hybrid["external_link_metrics"] = _normalize_external_link_metrics(
         hybrid.get("external_link_metrics")
     )
+    hybrid["static_links"] = _normalize_static_links(
+        hybrid.get("static_links")
+    )
     config["hybrid"] = hybrid
 
     load_test = dict(DEFAULT_LOAD_TEST)
@@ -275,6 +320,14 @@ def format_external_link_metrics(config):
     )
 
 
+def format_static_hybrid_links(config):
+    return json.dumps(
+        config["hybrid"].get("static_links", []),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
 def build_runtime_env(config):
     runtime = config["runtime"]
     hybrid = config["hybrid"]
@@ -296,6 +349,7 @@ def build_runtime_env(config):
         "EXTERNAL_ARP_ALLOWED_PREFIXES": ",".join(hybrid["external_arp_allowed_prefixes"]),
         "VIRTUAL_SWITCH_DPID_MAX": str(hybrid["virtual_switch_dpid_max"]),
         "EXTERNAL_LINK_METRICS_JSON": format_external_link_metrics(config),
+        "STATIC_HYBRID_LINKS_JSON": format_static_hybrid_links(config),
         "LOAD_TEST_FLOWS": str(load_test["flows"]),
         "LOAD_TEST_DURATION": str(load_test["duration"]),
         "LOAD_TEST_PARALLEL": str(load_test["parallel"]),

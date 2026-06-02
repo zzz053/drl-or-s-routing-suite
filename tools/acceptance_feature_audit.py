@@ -42,8 +42,8 @@ FEATURES = [
     {
         "name": "static_hybrid_boundary_config",
         "files": {
-            "tools/acceptance_config.py": ["EXTERNAL_LINK_PORTS", "HYBRID_REAL_ROUTES", "HYBRID_GATEWAY_IP"],
-            "config/hybrid_acceptance.json": ["external_link_ports", "real_routes"],
+            "tools/acceptance_config.py": ["EXTERNAL_LINK_PORTS", "STATIC_HYBRID_LINKS_JSON", "HYBRID_REAL_ROUTES"],
+            "config/hybrid_acceptance.json": ["external_link_ports", "static_links", "real_routes"],
         },
         "message": "静态虚实边界配置和环境变量生成能力存在",
     },
@@ -51,9 +51,9 @@ FEATURES = [
         "name": "web_acceptance_status",
         "files": {
             "web_api.py": ["/api/acceptance/status", "build_acceptance_status"],
-            "web_ui_html.py": ["acceptance-status-card", "updateAcceptanceStatus"],
+            "tools/acceptance_web_status.py": ["build_acceptance_status"],
         },
-        "message": "Web 首页验收状态接口和卡片存在",
+        "message": "Web 验收状态 API 存在，首页不再渲染验收状态卡片",
     },
     {
         "name": "web_route_session_highlight",

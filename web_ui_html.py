@@ -175,37 +175,6 @@ def get_web_ui_html():
             font-weight: 700;
             color: #e2e8f0;
         }
-        .acceptance-status-card {
-            min-width: 260px;
-            background: rgba(15, 23, 42, 0.78);
-            border: 1px solid rgba(34, 211, 238, 0.35);
-            border-radius: 10px;
-            padding: 8px 12px;
-            font-size: 11px;
-            line-height: 1.45;
-            color: #cbd5e1;
-        }
-        .acceptance-status-title {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 12px;
-            font-weight: 700;
-            color: #67e8f9;
-        }
-        .acceptance-status-value {
-            font-family: monospace;
-            color: #f8fafc;
-        }
-        .acceptance-status-note {
-            margin-top: 2px;
-            color: #94a3b8;
-        }
-        .acceptance-status-line {
-            display: flex;
-            justify-content: space-between;
-            gap: 10px;
-        }
         /* 主内容区域 */
         .main-content {
             flex: 1;
@@ -721,33 +690,6 @@ def get_web_ui_html():
                 </div>
                 </div>
             <div class="header-metrics">
-                <div class="acceptance-status-card" id="acceptance-status-card">
-                    <div class="acceptance-status-title">
-                        <span>虚实通信状态</span>
-                        <span class="acceptance-status-value" id="acceptance-status-value">unknown</span>
-                    </div>
-                    <div class="acceptance-status-note">控制面/最近路径状态</div>
-                    <div class="acceptance-status-line">
-                        <span>虚拟主机</span>
-                        <span id="acceptance-virtual-host">-</span>
-                    </div>
-                    <div class="acceptance-status-line">
-                        <span>真实主机</span>
-                        <span id="acceptance-real-host">-</span>
-                    </div>
-                    <div class="acceptance-status-line">
-                        <span>控制器</span>
-                        <span id="acceptance-controllers">-</span>
-                    </div>
-                    <div class="acceptance-status-line">
-                        <span>DRL服务</span>
-                        <span id="acceptance-drl">-</span>
-                    </div>
-                    <div class="acceptance-status-line">
-                        <span>最近路径</span>
-                        <span id="acceptance-route">-</span>
-                    </div>
-                </div>
                 <div class="metric-box">
                     <svg class="metric-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
@@ -2299,11 +2241,9 @@ def get_web_ui_html():
                 // 加载拓扑
                 console.log('准备加载拓扑数据...');
                 refreshTopology();
-                updateAcceptanceStatus();
                 
                 // 自动刷新（每5秒）
                 setInterval(refreshTopology, 5000);
-                setInterval(updateAcceptanceStatus, 5000);
                 setInterval(refreshSelectedSwitchFlows, 3000);
                 console.log('自动刷新已启用（每5秒）');
                 
@@ -2388,39 +2328,6 @@ def get_web_ui_html():
             }
         }
 
-        function setAcceptanceText(id, value) {
-            const el = document.getElementById(id);
-            if (el) {
-                el.textContent = value || '-';
-            }
-        }
-
-        async function updateAcceptanceStatus() {
-            try {
-                const response = await fetch('/api/acceptance/status');
-                if (!response.ok) {
-                    throw new Error('HTTP ' + response.status);
-                }
-                const data = await response.json();
-                const recent = data.recent_route_session || null;
-                setAcceptanceText('acceptance-status-value', data.status || 'unknown');
-                setAcceptanceText('acceptance-virtual-host', data.virtual_host_ip || '-');
-                setAcceptanceText('acceptance-real-host', data.real_host_ip || '-');
-                setAcceptanceText(
-                    'acceptance-controllers',
-                    String(data.controllers_connected ?? '-') + '/' + String(data.controllers_expected ?? '-')
-                );
-                setAcceptanceText('acceptance-drl', data.drl_connected ? '已连接' : '未连接');
-                setAcceptanceText(
-                    'acceptance-route',
-                    recent ? (recent.src_ip + ' -> ' + recent.dst_ip) : '-'
-                );
-            } catch (error) {
-                console.warn('获取验收状态失败:', error);
-                setAcceptanceText('acceptance-status-value', 'unknown');
-            }
-        }
-        
         // 更新网络图
         function updateNetwork(data) {
             try {

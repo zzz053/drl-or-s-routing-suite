@@ -28,6 +28,7 @@ from common_config import (
     FLOW_INSTALL_BARRIER_TIMEOUT,
     EXTERNAL_LINK_PORTS,
     EXTERNAL_LINK_METRICS,
+    STATIC_HYBRID_LINKS,
     EXTERNAL_ARP_ALLOWED_PREFIXES,
     VIRTUAL_SWITCH_DPID_MAX,
 )
@@ -76,6 +77,8 @@ class TopoAwareness(app_manager.RyuApp):
         self.external_host_sources = set()  # {(mac, ip)} learned from configured physical/external ports
         self.topo_inter_link = {}  # {(src.dpid, dst.dpid): (src.port_no, timestamp, delay, bw, loss)}存储交换机之间的内部链路信息.包括端口、时间戳、延迟、带宽和丢包率。
         self.topo_access_link = {}  # 存储接入链路信息（域间交换机的链路）
+        self.static_hybrid_link_keys = set()
+        self.static_hybrid_link_metrics = {}
         # 永久链路口集合：一旦某端口曾确认连接过交换机，则永久视为链路口，不再允许学习主机
         self.permanent_link_ports = {}  # {dpid: set(port_no, ...)}
         # self.detection_access_link = {}  # 带有时间戳的外部链路信息，用于超时检测，超时检测后被赋值给真正的外部链路
@@ -138,6 +141,7 @@ class TopoAwareness(app_manager.RyuApp):
         self._pending_path_packets = {}
 
         self._apply_configured_external_link_ports()
+        self._apply_static_hybrid_links()
         # 交换机真实流表快照（来自 OFPFlowStatsReply）
         self.switch_flow_stats = {}  # {dpid: [flow_entry, ...]}
         # 已下发路径会话：用于链路断开后的相关流表删除
@@ -779,7 +783,9 @@ class TopoAwareness(app_manager.RyuApp):
             (src_dpid, dst_dpid) = link
             try:
                 link_state = self.topo_inter_link[(src_dpid, dst_dpid)]
-                if self._configured_external_link_metric(src_dpid, link_state[0]):
+                if self._apply_static_hybrid_link_metric(src_dpid, dst_dpid, link_state):
+                    pass
+                elif self._configured_external_link_metric(src_dpid, link_state[0]):
                     self._apply_configured_external_link_metric(src_dpid, dst_dpid, link_state)
                 else:
                     delay = self._get_delay(src_dpid, dst_dpid)
@@ -1144,6 +1150,74 @@ class TopoAwareness(app_manager.RyuApp):
                 continue
             for port_no in ports:
                 self._mark_permanent_link_port(configured_dpid, port_no)
+
+    def _apply_static_hybrid_links(self, dpid=None):
+        """Inject configured switch-to-switch links that cannot rely on LLDP."""
+        for link in STATIC_HYBRID_LINKS:
+            src_dpid = int(link["src_dpid"])
+            dst_dpid = int(link["dst_dpid"])
+            if dpid is not None and dpid not in (src_dpid, dst_dpid):
+                continue
+            self._upsert_static_hybrid_link(
+                src_dpid,
+                int(link["src_port"]),
+                dst_dpid,
+                link,
+            )
+            self._upsert_static_hybrid_link(
+                dst_dpid,
+                int(link["dst_port"]),
+                src_dpid,
+                link,
+            )
+
+    def _upsert_static_hybrid_link(self, src_dpid, src_port, dst_dpid, link):
+        self._mark_permanent_link_port(src_dpid, src_port)
+        if not hasattr(self, "static_hybrid_link_keys"):
+            self.static_hybrid_link_keys = set()
+        if not hasattr(self, "static_hybrid_link_metrics"):
+            self.static_hybrid_link_metrics = {}
+        key = (src_dpid, dst_dpid)
+        metric = {
+            "delay_seconds": float(link.get("delay_seconds", 0.0)),
+            "bandwidth_mbps": float(link.get("bandwidth_mbps", Initial_bandwidth)),
+            "loss_percent": float(link.get("loss_percent", 0.0)),
+            "source": str(link.get("source", "configured_static_link")),
+        }
+        self.static_hybrid_link_keys.add(key)
+        self.static_hybrid_link_metrics[key] = metric
+        self.topo_inter_link[key] = [
+            src_port,
+            0,
+            metric["delay_seconds"],
+            metric["bandwidth_mbps"],
+            metric["loss_percent"],
+        ]
+        self.graph.add_edge(src_dpid, dst_dpid)
+        self.graph[src_dpid][dst_dpid]["delay"] = metric["delay_seconds"]
+        self.graph[src_dpid][dst_dpid]["bw"] = metric["bandwidth_mbps"]
+        self.graph[src_dpid][dst_dpid]["loss"] = metric["loss_percent"]
+        self.graph[src_dpid][dst_dpid]["metric_source"] = metric["source"]
+        self.graph[src_dpid][dst_dpid]["static_hybrid_link"] = True
+        self._remove_access_link_pair(src_dpid, dst_dpid)
+
+    def _static_hybrid_link_metric(self, src_dpid, dst_dpid):
+        return getattr(self, "static_hybrid_link_metrics", {}).get((src_dpid, dst_dpid))
+
+    def _apply_static_hybrid_link_metric(self, src_dpid, dst_dpid, link_state):
+        metric = self._static_hybrid_link_metric(src_dpid, dst_dpid)
+        if not metric:
+            return False
+        link_state[2] = metric["delay_seconds"]
+        link_state[3] = metric["bandwidth_mbps"]
+        link_state[4] = metric["loss_percent"]
+        if self.graph.has_edge(src_dpid, dst_dpid):
+            self.graph[src_dpid][dst_dpid]["delay"] = metric["delay_seconds"]
+            self.graph[src_dpid][dst_dpid]["bw"] = metric["bandwidth_mbps"]
+            self.graph[src_dpid][dst_dpid]["loss"] = metric["loss_percent"]
+            self.graph[src_dpid][dst_dpid]["metric_source"] = metric.get("source", "configured_static_link")
+            self.graph[src_dpid][dst_dpid]["static_hybrid_link"] = True
+        return True
 
     def is_configured_external_link_port(self, dpid, port):
         return port in EXTERNAL_LINK_PORTS.get(dpid, set())
@@ -1632,6 +1706,7 @@ class TopoAwareness(app_manager.RyuApp):
         self.host_to_sw_port.setdefault(dpid, {})
         self.permanent_link_ports.setdefault(dpid, set())
         self._apply_configured_external_link_ports(dpid)
+        self._apply_static_hybrid_links(dpid)
         self.mac_to_port.setdefault(dpid, {})
         if dpid not in self.dpid_to_switch:
             self.dpid_to_switch[dpid] = sw.dp
@@ -1664,6 +1739,7 @@ class TopoAwareness(app_manager.RyuApp):
             self.host_to_sw_port.setdefault(dpid, {})
             self.permanent_link_ports.setdefault(dpid, set())
             self._apply_configured_external_link_ports(dpid)
+            self._apply_static_hybrid_links(dpid)
             self.mac_to_port.setdefault(dpid, {})
             self.dpid_to_switch_ip[dpid] = sw.dp.address
             self.dpid_to_switch[dpid] = sw.dp
@@ -1756,6 +1832,10 @@ class TopoAwareness(app_manager.RyuApp):
     def delete_inter_link(self, link):
         src_dpid = link.src.dpid
         dst_dpid = link.dst.dpid
+        if (src_dpid, dst_dpid) in getattr(self, "static_hybrid_link_keys", set()):
+            self._apply_static_hybrid_links(src_dpid)
+            self.logger.debug("保留静态虚实链路，忽略链路删除事件: %s -> %s", src_dpid, dst_dpid)
+            return
         if (src_dpid, dst_dpid) in self.topo_inter_link:
             del self.topo_inter_link[(src_dpid, dst_dpid)]
             if self.graph.has_edge(src_dpid, dst_dpid):

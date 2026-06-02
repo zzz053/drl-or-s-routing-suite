@@ -61,6 +61,42 @@ def _parse_external_link_metrics(raw_value):
         }
     return metrics
 
+
+def _parse_static_hybrid_links(raw_value):
+    links = []
+    if not raw_value:
+        return links
+    try:
+        items = json.loads(raw_value)
+    except (TypeError, ValueError):
+        return links
+    if not isinstance(items, list):
+        return links
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        try:
+            src_dpid = int(item.get("src_dpid"))
+            src_port = int(item.get("src_port"))
+            dst_dpid = int(item.get("dst_dpid"))
+            dst_port = int(item.get("dst_port"))
+            delay_ms = float(item.get("delay_ms", 0.0))
+            bandwidth_mbps = float(item.get("bandwidth_mbps", 1.0))
+            loss_percent = float(item.get("loss_percent", 0.0))
+        except (TypeError, ValueError):
+            continue
+        links.append({
+            "src_dpid": src_dpid,
+            "src_port": src_port,
+            "dst_dpid": dst_dpid,
+            "dst_port": dst_port,
+            "delay_seconds": max(delay_ms, 0.0) / 1000.0,
+            "bandwidth_mbps": max(bandwidth_mbps, 0.000001),
+            "loss_percent": max(loss_percent, 0.0),
+            "source": str(item.get("source", "configured_static_link")),
+        })
+    return links
+
 # 连接根控 server_agent（与 server_agent.py 中 CONTROLLER_IP/CONTROLLER_PORT 对应）
 SERVER_CONFIG = {
     'server_ip': os.environ.get('SERVER_AGENT_IP', '127.0.0.1'),
@@ -102,6 +138,7 @@ FLOW_INSTALL_BARRIER_TIMEOUT = float(os.environ.get("FLOW_INSTALL_BARRIER_TIMEOU
 # Example: EXTERNAL_LINK_PORTS=1:20 marks s1:port20 as a link/external port before LLDP learns it.
 EXTERNAL_LINK_PORTS = _parse_external_link_ports(os.environ.get("EXTERNAL_LINK_PORTS", ""))
 EXTERNAL_LINK_METRICS = _parse_external_link_metrics(os.environ.get("EXTERNAL_LINK_METRICS_JSON", ""))
+STATIC_HYBRID_LINKS = _parse_static_hybrid_links(os.environ.get("STATIC_HYBRID_LINKS_JSON", ""))
 EXTERNAL_ARP_ALLOWED_PREFIXES = [
     item.strip()
     for item in os.environ.get("EXTERNAL_ARP_ALLOWED_PREFIXES", "10.0.0.0/24").split(",")
