@@ -55,6 +55,7 @@ def _resolve_service_path(path):
 NetEnv = None
 Request = None
 Policy = None
+NET_ENV_IMPORT_ERROR = None
 
 if torch is not None and Data is not None:
     # 尝试导入并打补丁
