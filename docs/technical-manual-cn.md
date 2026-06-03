@@ -96,6 +96,26 @@ VM 外部网卡 <EXTERNAL_INTERFACE>
 
 说明：当前项目已经接入 K 候选路径与 DRL 调用接口；具体 DRL 模型是否真正按候选路径逐条打分选择，需要结合所加载模型和 `path_service.py` 运行结果单独验证。
 
+#### 端口业务分类与 DRL 对齐
+
+项目通过 `traffic_classes` 把甲方要求的“按终端端口号区分业务”转换为 DRL 可理解的请求类型。运行链路为：
+
+```text
+TCP/UDP 源/目的端口 -> task_type -> route_policy / flow_priority -> drl_type / drl_demand_kbps / drl_duration
+```
+
+默认三类业务如下：
+
+| 端口范围 | 业务类 | DRL rtype | 路由策略 | 流表优先级 | DRL 需求 |
+| --- | --- | ---: | --- | ---: | ---: |
+| `1-5000` | `task_0` | `0` | `min_delay` | `30` | `100Kbps` |
+| `5001-10000` | `task_1` | `1` | `max_bandwidth` | `20` | `1500Kbps` |
+| `10001-65535` | `task_2` | `2` | `hybrid` | `10` | `1500Kbps` |
+
+分类规则是先匹配目的端口，再匹配源端口；非 TCP/UDP 流量或未命中端口范围时使用 `default`。`rtype 3` 是 DRL-OR-S 训练环境中的丢包敏感类型，当前甲方需求为三类业务，因此默认不对外暴露。
+
+控制器把业务元数据放入路径请求和路径会话；`server_agent.py` 再把 `drl_type`、`drl_demand_kbps`、`drl_duration` 透传给 `drl-or-s/path_service.py`。如果 DRL 依赖或模型不可用，路径仍可回退到 Dijkstra/fallback，但 Web 和日志中仍会保留业务分类元数据。
+
 ### 3.5 流表下发与生命周期
 
 控制器会根据路径结果安装端到端转发流表：
@@ -248,6 +268,7 @@ http://<SERVER_AGENT_IP>:6009
 路径会话记录系统最近处理过的源/目的地址、交换机路径和路径来源。Web 支持：
 
 - 在路径会话列表中查看源/目的 IP、业务类型、路由策略、路径来源和 fallback 原因。
+- 对按端口分类的业务，会显示 `task_type / rtype / demand / duration`，用于核对控制器分类和 DRL 请求语义是否一致。
 - 点击某条路径会话后，高亮该会话经过的节点和链路。
 - 高亮样式使用青色节点和虚线链路，便于和普通拓扑链路区分。
 - 当路径重规划导致会话 ID 变化时，前端会尝试按源/目的、路径和策略签名重新匹配当前选中会话。
@@ -446,6 +467,38 @@ config/hybrid_acceptance.json
     "gateway_mac": "02:00:00:00:fe:01",
     "real_routes": ["<REAL_NETWORK_CIDR>"]
   },
+  "traffic_classes": [
+    {
+      "name": "task_0",
+      "port_start": 1,
+      "port_end": 5000,
+      "drl_type": 0,
+      "route_policy": "min_delay",
+      "flow_priority": 30,
+      "drl_demand_kbps": 100,
+      "drl_duration": 100
+    },
+    {
+      "name": "task_1",
+      "port_start": 5001,
+      "port_end": 10000,
+      "drl_type": 1,
+      "route_policy": "max_bandwidth",
+      "flow_priority": 20,
+      "drl_demand_kbps": 1500,
+      "drl_duration": 100
+    },
+    {
+      "name": "task_2",
+      "port_start": 10001,
+      "port_end": 65535,
+      "drl_type": 2,
+      "route_policy": "hybrid",
+      "flow_priority": 10,
+      "drl_demand_kbps": 1500,
+      "drl_duration": 100
+    }
+  ],
   "validation": {
     "virtual_host_name": "<VALIDATION_HOST_NAME>",
     "virtual_host_ip": "<VALIDATION_HOST_IP>",
@@ -465,9 +518,12 @@ config/hybrid_acceptance.json
 | `hybrid.gateway_ip` | 虚拟主机访问真实网段时使用的网关 IP |
 | `hybrid.gateway_mac` | 控制器响应虚拟网关 ARP 时使用的 MAC |
 | `hybrid.real_routes` | 真实侧主机所在网段 |
+| `traffic_classes` | TCP/UDP 端口区间到业务类、路由策略、流表优先级和 DRL `rtype/demand/duration` 的映射 |
 | `validation.*` | 自动验收使用的源主机和目标主机 |
 
 以上字段必须按现场拓扑填写，不应沿用旧实验环境中的主机名、IP、端口或网段。
+
+`traffic_classes` 会在 `acceptance.sh start` 时由 `tools/acceptance_config.py` 校验并导出为 `TRAFFIC_CLASSES_JSON`。控制器运行时以该环境变量为准；如果 JSON 中缺少该段，系统使用默认三类端口映射。配置校验会拒绝空列表、重复名称、非法端口、非正优先级、非正 DRL 需求/持续时间，以及当前未开放的 `drl_type=3`。
 
 ## 9. 环境变量
 
@@ -656,6 +712,7 @@ UDP 负载测试：
 - `6654` 到 `6670` 的控制器端口监听。
 - `/api/health`、`/api/statistics`、`/api/acceptance/status`、`/api/controllers`、`/api/topo`、`/api/graph?include_flows=0`、`/api/route_sessions` 可访问。
 - Web 拓扑图和路径会话一致性审计通过。
+- 运行进程环境变量与 JSON 配置一致，包括 `TRAFFIC_CLASSES_JSON`。
 - 验收源主机进程存在。
 - 验收源主机存在到真实网段的路由。
 - 虚拟主机到真实主机 ping 通过。
@@ -689,6 +746,20 @@ curl -s http://127.0.0.1:6009/api/route_sessions
   "issues": []
 }
 ```
+
+端口业务分类验证时，访问 `/api/route_sessions`，确认会话中包含以下字段：
+
+```json
+{
+  "task_type": "task_1",
+  "route_policy": "max_bandwidth",
+  "drl_type": 1,
+  "drl_demand_kbps": 1500,
+  "drl_duration": 100
+}
+```
+
+也可以查看 `logs/server_agent.log`，路径请求日志应包含 `task=... policy=... drl_type=... demand=... duration=...`。
 
 ## 13. 手工分步启动
 
@@ -814,10 +885,14 @@ python -m pytest \
   tests/test_acceptance_scripts.py \
   tests/test_acceptance_web_status.py \
   tests/test_web_acceptance_status.py \
+  tests/test_external_link_ports_config.py \
+  tests/test_path_service_decision_metadata.py \
   tests/test_server_agent_startup.py \
   tests/test_server_agent_graph_lock.py \
   tests/test_server_agent_drl_metadata.py \
   tests/test_server_agent_shadow_mode.py \
+  tests/test_web_api_performance.py \
+  tests/test_web_performance_architecture.py \
   tests/test_delivery_scripts.py \
   -q
 ```
@@ -839,6 +914,17 @@ python tools/acceptance_feature_audit.py
 
 ```bash
 python tools/mininet_load_test.py --flows 20 --duration 10 --parallel 5 --seed 1
+```
+
+端口业务分类验证：
+
+```bash
+# 从 Mininet 主机或真实业务端发起 TCP/UDP 流量，目的端口分别落入三段范围：
+# 4000  -> task_0 / rtype 0 / demand 100Kbps
+# 7000  -> task_1 / rtype 1 / demand 1500Kbps
+# 12000 -> task_2 / rtype 2 / demand 1500Kbps
+curl -s http://127.0.0.1:6009/api/route_sessions
+tail -n 200 logs/server_agent.log | grep -E 'task_|drl_type|demand|duration'
 ```
 
 端到端验收：
