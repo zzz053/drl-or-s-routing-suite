@@ -29,10 +29,10 @@ The script starts DRL, server_agent, the Military Ryu controllers, then enters t
 For hybrid virtual/physical switch communication, pass the host NIC connected to the real SDN switch:
 
 ```bash
-./start_suite.sh eno1
+./start_suite.sh <external-data-plane-nic>
 ```
 
-This attaches `eno1` to Mininet `s1:port20`, marks `dpid=1,port=20` as an external link port with `EXTERNAL_LINK_PORTS=1:20`, and keeps the real switch on controller `c1` / OpenFlow port `6654`.
+This attaches the selected NIC to Mininet `s1:port20`, marks `dpid=1,port=20` as an external link port with `EXTERNAL_LINK_PORTS=1:20`, and keeps the real switch on controller `c1` / OpenFlow port `6654`. In the verified VM environment the NIC is `ens34`; `eno1` is only valid on servers where that physical interface name has been confirmed.
 
 By default, `start_suite.sh` runs `server_agent.py` in `hybrid` mode and uses `$HOME/miniconda3/envs/ryu_drl_s/bin/python` for `path_service.py` when that environment exists. You can override these choices with environment variables:
 
@@ -77,7 +77,8 @@ RUN_TESTING_CN.md
 ## Notes
 
 - The Web UI keeps the `hydrate` design.
-- Manual flow add/delete and route sessions are preserved.
+- Web is read-only by default in the acceptance configuration; manual flow add/delete code is preserved for explicit development mode.
+- Link capacity is sensed from OpenFlow port description stats when available, with JSON `bandwidth_mbps` used only as a fallback.
 - DRL path calculation uses `drl-or-s/path_service.py` with a long-lived socket from `server_agent.py`.
 - The Military model weights are packaged under `drl-or-s/model/Military_mininet/`.
 - The topology files used by DRL inference are packaged under `drl-or-s/topology/Military/`.

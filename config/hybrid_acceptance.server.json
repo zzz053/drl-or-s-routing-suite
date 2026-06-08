@@ -81,6 +81,9 @@
       "drl_duration": 100
     }
   ],
+  "web": {
+    "mode": "read_only"
+  },
   "load_test": {
     "flows": 20,
     "duration": 10,

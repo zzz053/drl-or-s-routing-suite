@@ -187,6 +187,9 @@ SERVER_CONFIG = {
 CONTROLLER_IP = os.environ.get('SERVER_AGENT_BIND_IP', '0.0.0.0')
 CONTROLLER_PORT = int(os.environ.get('SERVER_AGENT_PORT', '6001'))
 WEB_PORT = int(os.environ.get('WEB_PORT', '6009'))
+WEB_MODE = os.environ.get("WEB_MODE", "read_only").strip().lower()
+if WEB_MODE not in {"read_only", "development"}:
+    WEB_MODE = "read_only"
 PATH_SERVICE_HOST = os.environ.get('PATH_SERVICE_HOST', '127.0.0.1')
 PATH_SERVICE_PORT = int(os.environ.get('PATH_SERVICE_PORT', '8889'))
 

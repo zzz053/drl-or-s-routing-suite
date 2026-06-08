@@ -36,6 +36,9 @@ DEFAULT_LOAD_TEST = {
     "udp": False,
     "bandwidth": "10M",
 }
+DEFAULT_WEB = {
+    "mode": "read_only",
+}
 DEFAULT_TRAFFIC_CLASSES = [
     {
         "name": "task_0",
@@ -343,6 +346,13 @@ def load_acceptance_config(path="config/hybrid_acceptance.json"):
 
     config["traffic_classes"] = _normalize_traffic_classes(raw.get("traffic_classes"))
 
+    web = dict(DEFAULT_WEB)
+    web.update(_require_mapping(raw.get("web", {}), "web"))
+    web["mode"] = _require_string(web.get("mode"), "web.mode").lower()
+    if web["mode"] not in {"read_only", "development"}:
+        raise AcceptanceConfigError("web.mode must be one of read_only, development")
+    config["web"] = web
+
     load_test = dict(DEFAULT_LOAD_TEST)
     load_test.update(_require_mapping(raw.get("load_test", {}), "load_test"))
     load_test["flows"] = _require_int(load_test.get("flows"), "load_test.flows")
@@ -427,6 +437,7 @@ def build_runtime_env(config):
         "ROUTE_FLOW_IDLE_TIMEOUT": str(runtime["route_flow_idle_timeout"]),
         "ROUTE_FLOW_HARD_TIMEOUT": str(runtime["route_flow_hard_timeout"]),
         "FLOW_INSTALL_BARRIER_TIMEOUT": str(runtime["flow_install_barrier_timeout"]),
+        "WEB_MODE": config.get("web", DEFAULT_WEB)["mode"],
         "EXTERNAL_ARP_ALLOWED_PREFIXES": ",".join(hybrid["external_arp_allowed_prefixes"]),
         "VIRTUAL_SWITCH_DPID_MAX": str(hybrid["virtual_switch_dpid_max"]),
         "EXTERNAL_LINK_METRICS_JSON": format_external_link_metrics(config),

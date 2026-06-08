@@ -164,10 +164,20 @@ TCP/UDP 源/目的端口 -> task_type -> route_policy / flow_priority -> drl_typ
 系统会采集并展示多类运行数据：
 
 - LLDP/echo 相关的链路时延估计。
+- OpenFlow `PortDescStats` 的 `curr_speed/max_speed`，以及 `PortStats` 字节增量计算出的真实吞吐、利用率和剩余带宽。
 - 端口统计、带宽、空闲带宽、利用率和丢包相关字段。
 - 交换机流表、命中包数、优先级、match 和 action。
 - 路径会话中的路径来源、DRL 决策来源、fallback 原因、模型信息、置信度和计算耗时等元数据。
-- Web 统计区展示控制器、交换机、主机、链路、路径服务连接状态和简化指标。
+- Web 统计区展示控制器、交换机、主机、链路、路径服务连接状态、网络吞吐量、平均利用率和异常端口数。
+
+真实带宽的使用优先级为：
+
+1. `PortDescStats.curr_speed`。
+2. `PortDescStats.max_speed`。
+3. `hybrid.external_link_metrics` / `hybrid.static_links` 配置值。
+4. 默认值 `800 Mbps`。
+
+这样做的目的是让控制器自动感知真实链路能力，同时保留配置兜底，避免在虚实边界或厂商设备未返回速率时选路失效。
 
 说明：Web 首页中的吞吐、时延等统计用于运行态观察，不能替代 `ping`、`iperf`、`tcpdump`、交换机计数器等验收级数据面证据。
 
@@ -184,6 +194,8 @@ Web/API 提供运行态观测和调试入口：
 - 手动流表下发和删除。
 - 验收状态卡片。
 - 健康检查和报告生成所需的状态接口。
+
+默认验收配置下，Web 处于只读模式，`POST/DELETE` 会被拒绝。手动流表入口保留在开发环境中显式开启。
 
 ### 3.11 自动化验收
 
@@ -260,7 +272,7 @@ http://<SERVER_AGENT_IP>:6009
 
 - 链路端点和端口。
 - 链路类型，例如交换机链路、主机接入链路、控制器关系或外部链路。
-- 时延、带宽、丢包率、域间关系等字段。
+- 容量、当前吞吐、可用带宽、利用率、丢包率、错误率、端口状态和带宽来源。
 - down 链路或异常链路会使用不同颜色显示。
 
 ### 4.5 路径会话与路径高亮
@@ -305,6 +317,7 @@ Web 支持面向调试的手动流表下发和删除：
 - 下发前应确认 `switch_id` 和 `out_port` 对应真实拓扑。
 - 删除流表时应确认目标 `flow_id`，避免影响自动路径流表。
 - 表单会生成 Match JSON 预览；复杂 match 建议先通过 API 或小规模场景验证。
+- 在默认 `read_only` 模式下，这些写接口会被后端直接拒绝；只有 `web.mode=development` 时才允许使用。
 
 ### 4.8 验收状态
 
@@ -327,6 +340,7 @@ Web 前端包含以下性能设计：
 - 指标类变化不会强制重新布局，减少页面抖动。
 - 边 ID 保持稳定，便于路径高亮和 hover 状态维护。
 - 鼠标悬停链路只更新临时状态，不修改主图数据集。
+- 全局统计中的 `Network Throughput` 和 `Avg Utilization` 来自真实端口统计汇总，不再使用随机数或固定乘法伪造。
 
 这些优化主要面向演示和运维观察，不改变控制器的路径计算和流表下发行为。
 
@@ -351,7 +365,7 @@ API 用途：
 | API | 用途 |
 | --- | --- |
 | `/api/health` | 基础服务存活检查 |
-| `/api/statistics` | 控制器、交换机、主机、链路数量统计 |
+| `/api/statistics` | 控制器、交换机、主机、链路数量统计，以及真实网络吞吐、平均利用率等聚合指标 |
 | `/api/controllers` | 控制器连接和控制器-交换机关系 |
 | `/api/topo` | 兼容旧前端或脚本的简化拓扑数据 |
 | `/api/graph` | Web 拓扑图数据，默认不包含全量流表 |
@@ -362,6 +376,8 @@ API 用途：
 | `POST /api/path` | 手工请求一次路径计算 |
 | `POST /api/flows` | 下发手动流表 |
 | `DELETE /api/flows` | 删除手动流表 |
+
+默认验收模式下，后三个写接口会返回 `403 web_write_disabled`。
 
 ## 5. 目录结构
 
@@ -738,6 +754,20 @@ curl -s http://127.0.0.1:6009/api/controllers
 curl -s http://127.0.0.1:6009/api/route_sessions
 ```
 
+`/api/statistics` 中应包含真实网络指标：
+
+```json
+{
+  "network": {
+    "throughput_mbps": 0.0,
+    "avg_utilization_percent": 0.0,
+    "max_utilization_percent": 0.0,
+    "active_link_count": 0,
+    "error_link_count": 0
+  }
+}
+```
+
 `/api/acceptance/status` 通过时应返回：
 
 ```json
@@ -760,6 +790,16 @@ curl -s http://127.0.0.1:6009/api/route_sessions
 ```
 
 也可以查看 `logs/server_agent.log`，路径请求日志应包含 `task=... policy=... drl_type=... demand=... duration=...`。
+
+默认只读模式验证：
+
+```bash
+curl -s -X POST http://127.0.0.1:6009/api/path \
+  -H 'Content-Type: application/json' \
+  -d '{"src":"10.0.0.1","dst":"10.0.0.2"}'
+```
+
+预期返回 `403`，响应体包含 `web_write_disabled`。自动路径计算和控制器内部流表下发不受该限制影响。
 
 ## 13. 手工分步启动
 

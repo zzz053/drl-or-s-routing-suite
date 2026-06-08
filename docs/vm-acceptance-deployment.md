@@ -23,7 +23,7 @@ ip route show default
 
 当前已验证的 VM 网口是：
 
-- `ens33`：管理网卡，承载默认路由和 SSH。
+- `ens33`：管理网卡，承载默认路由和 SSH；当前验证地址为 `192.168.172.128`。
 - `ens34`：外部数据面网卡，接入真实交换机侧网络。
 
 因此 VM 上应使用：
@@ -69,6 +69,8 @@ ip route show default
   "real_routes": ["192.168.103.0/24"]
 }
 ```
+
+这里的 `bandwidth_mbps` 只是兜底配置，不再作为运行时固定带宽。控制器会优先通过 OpenFlow `PortDescStats` 感知端口速率，再结合 `PortStats` 字节增量计算当前吞吐、利用率和剩余带宽；只有感知失败时才回退到这里的配置值，再回退到默认 `800 Mbps`。
 
 ## 4. 启动验收环境
 
@@ -124,6 +126,7 @@ SUDO_PASSWORD=h PYTHON_BIN=python3 ./acceptance.sh health
 - `hybrid.external_link_metrics`：外部边界端口的配置型 delay/bandwidth/loss，控制器用于边界链路权重。
 - `hybrid.static_links`：显式注入无法依赖 LLDP 发现的虚实 OpenFlow 交换机链路，例如 `s1:20 <-> 128986965761:11`。
 - `traffic_classes`：按 TCP/UDP 端口区间划分 3 类业务，并导出为 `TRAFFIC_CLASSES_JSON`；控制器据此生成 `task_type`、路由策略、流表优先级和 DRL `rtype/demand/duration`。
+- `web.mode`：默认 `read_only`，后端会拒绝 Web 写接口；开发环境可显式切换到 `development`。
 - `load_test.*`：随机打流测试默认参数。
 
 命令行环境里的同名变量会被 JSON 导出的值覆盖。敏感项和本机路径仍不放入 JSON，例如 `SUDO_PASSWORD`、`PYTHON_BIN`、`MININET_PYTHON`、`PATH_SERVICE_PYTHON`。
@@ -136,6 +139,24 @@ SUDO_PASSWORD=h PYTHON_BIN=python3 ./acceptance.sh health
 - 实测证据：`./acceptance.sh health` 会从 Mininet 验证主机主动 ping 真实主机，解析 `min/avg/max/mdev` RTT 和丢包率，并输出 `virtual_real_latency`。
 
 `virtual_real_latency` 是端到端测量，包含虚拟主机、Mininet、OVS、VM 外部网卡、真实交换机和真实主机路径，不等同于单条物理链路的精确单向时延。报告中的 `estimated_one_way_ms` 只是用 RTT/2 给出的工程估计。
+
+### 7.1 真实带宽和 Web 指标
+
+验收环境中的 Web `http://<SERVER_AGENT_IP>:6009/api/statistics` 会展示真实网络吞吐和平均利用率。它们来自控制器周期采集的端口统计，不是固定常量或模拟值。`8889` 是 path service 端口，不提供 Web 统计 API。
+
+建议检查命令：
+
+```bash
+curl -s http://127.0.0.1:6009/api/statistics
+sudo ovs-ofctl -O OpenFlow13 dump-ports-desc s1
+sudo ovs-ofctl -O OpenFlow13 dump-ports s1
+```
+
+重点关注：
+
+- `curr_speed/max_speed` 是否能感知到真实速率。
+- `throughput_mbps`、`capacity_mbps`、`utilization_percent` 是否随业务变化。
+- `bandwidth_source` 是否为 `openflow_curr_speed`、`openflow_max_speed`、`configured` 或 `default`。
 
 ## 8. 生成报告
 

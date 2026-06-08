@@ -23,6 +23,7 @@ from common_config import (
     CONTROLLER_IP,
     CONTROLLER_PORT,
     WEB_PORT,
+    WEB_MODE,
     PATH_SERVICE_HOST,
     PATH_SERVICE_PORT,
     DRL_ROUTE_MODE,
@@ -62,9 +63,6 @@ logger = logging.getLogger("server_agent")
 # 创建 Flask 应用
 app = Flask(__name__)
 
-# 启用 CORS，允许所有来源
-CORS(app, resources={r"/api/*": {"origins": "*"}})
-
 # 全局server_agent实例引用（在main()中初始化）
 server_agent = None
 
@@ -101,6 +99,7 @@ class ServerAgent:
         self.ip = ip
         self.port = port
         self.route_mode = route_mode or DRL_ROUTE_MODE
+        self.web_mode = WEB_MODE
         self.sock = None
         self.web_http_server = None
         self.is_running = False
@@ -309,7 +308,7 @@ class ServerAgent:
         try:
             self.web_http_server = make_server(
                 '0.0.0.0', WEB_PORT, app, threaded=True)
-        except SystemExit as exc:
+        except (OSError, SystemExit) as exc:
             raise RuntimeError(
                 f"Web port {WEB_PORT} is already in use; "
                 "stop the running suite or set WEB_PORT to another free port."
@@ -779,10 +778,37 @@ class ServerAgent:
                     if not math.isfinite(weight) or weight < 0:
                         weight = 1
                     
+                    runtime_fields = {}
+                    for key in (
+                        'capacity_mbps', 'throughput_mbps', 'rx_mbps', 'tx_mbps',
+                        'utilization_percent', 'bandwidth_source', 'port_state',
+                        'drop_rate', 'error_rate', 'rx_errors', 'tx_errors',
+                        'rx_dropped', 'tx_dropped',
+                    ):
+                        if key in link:
+                            runtime_fields[key] = link.get(key)
+                    existing_edge = self.G.get_edge_data(src, dst, {}) if self.G.has_edge(src, dst) else {}
+                    incoming_source = str(runtime_fields.get('bandwidth_source', '') or '')
+                    existing_source = str(existing_edge.get('bandwidth_source', '') or '')
+                    if (
+                        existing_source.startswith('openflow_')
+                        and not incoming_source.startswith('openflow_')
+                    ):
+                        bw = existing_edge.get('bw', bw)
+                        for key in (
+                            'capacity_mbps', 'throughput_mbps', 'rx_mbps', 'tx_mbps',
+                            'utilization_percent', 'bandwidth_source', 'port_state',
+                            'drop_rate', 'error_rate', 'rx_errors', 'tx_errors',
+                            'rx_dropped', 'tx_dropped',
+                        ):
+                            if key in existing_edge:
+                                runtime_fields[key] = existing_edge.get(key)
+
                     self.G.add_edge(src, dst, weight=weight, controller=controller_key,
                                    delay=delay, bw=bw, loss=loss,
                                    src_port=link.get('src_port'),
-                                   edge_type='switch_link')
+                                   edge_type='switch_link',
+                                   **runtime_fields)
                     
                     # 添加交换机到控制器的连接（如果交换机属于该控制器）
                     if controller_id in self.G:

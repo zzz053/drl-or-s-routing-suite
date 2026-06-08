@@ -127,6 +127,7 @@ def test_load_acceptance_config_validates_and_preserves_required_values(tmp_path
     assert cfg["traffic_classes"][1]["name"] == "task_1"
     assert cfg["traffic_classes"][1]["drl_type"] == 1
     assert cfg["traffic_classes"][1]["route_policy"] == "max_bandwidth"
+    assert cfg["web"]["mode"] == "read_only"
     assert cfg["load_test"]["flows"] == 30
     assert "forbidden_ports" not in cfg["controllers"]
     assert cfg["validation"]["real_host_ip"] == "192.168.103.3"
@@ -175,6 +176,7 @@ def test_build_runtime_env_maps_config_to_existing_variables():
     assert env["ROUTE_FLOW_IDLE_TIMEOUT"] == "180"
     assert env["ROUTE_FLOW_HARD_TIMEOUT"] == "0"
     assert env["FLOW_INSTALL_BARRIER_TIMEOUT"] == "0.75"
+    assert env["WEB_MODE"] == "read_only"
     assert env["EXTERNAL_ARP_ALLOWED_PREFIXES"] == "10.0.0.0/24,192.168.103.0/24"
     assert env["VIRTUAL_SWITCH_DPID_MAX"] == "1000"
     assert '"delay_ms":2.5' in env["EXTERNAL_LINK_METRICS_JSON"]
