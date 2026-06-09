@@ -52,6 +52,21 @@ http://localhost:6009
 ./stop_suite.sh
 ```
 
+## Source-hidden runtime package
+
+For acceptance delivery where the customer should not browse first-party source
+directly, build a runtime layout:
+
+```bash
+python tools/build_delivery_package.py --output dist/drl-ors-runtime
+```
+
+The generated package keeps editable configuration under
+`/etc/drl-ors/config.json`, exposes `drl-orsctl start|stop|health|report`, and
+ships core Python modules as `.pyc` files under `/opt/drl-ors`. This is a
+lightweight operational hiding measure, not encryption; a root user can still
+copy or reverse engineer runtime artifacts.
+
 ## Acceptance Topology
 
 Use the Military topology:

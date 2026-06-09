@@ -1,4 +1,6 @@
 logs/
+dist/
+delivery/
 *.log
 *.pid
 __pycache__/

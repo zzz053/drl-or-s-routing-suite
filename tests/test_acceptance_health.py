@@ -4,7 +4,9 @@ from tools.acceptance_health import (
     command_contains_route,
     check_external_interface,
     check_data_plane,
+    check_required_ports,
     check_runtime_environment,
+    check_web_apis,
     check_static_hybrid_links,
     _find_mininet_host_pid,
     flow_output_has_bidirectional_flows,
@@ -103,6 +105,35 @@ def test_switch_names_for_flow_checks_uses_config_and_route_session_without_lab_
     }
 
     assert switch_names_for_flow_checks(config, route_sessions) == ["s1", "s6", "s28"]
+
+
+def test_check_required_ports_uses_configured_service_ports(monkeypatch):
+    observed = []
+    config = {
+        "services": {
+            "server_agent": {"port": 6101},
+            "path_service": {"port": 8890},
+            "web": {"port": 6010},
+        },
+        "controllers": {"ports": [6654, 6655]},
+    }
+
+    def fake_listening(port, host="127.0.0.1", timeout=0.3):
+        observed.append(port)
+        return True
+
+    monkeypatch.setattr("tools.acceptance_health.tcp_port_listening", fake_listening)
+
+    checks = check_required_ports(config)
+
+    assert observed == [6101, 6010, 8890, 6654, 6655]
+    assert [item.name for item in checks] == [
+        "port_6101",
+        "port_6010",
+        "port_8890",
+        "port_6654",
+        "port_6655",
+    ]
 
 
 def test_run_command_supplies_sudo_password_without_changing_non_sudo(monkeypatch):
@@ -273,6 +304,15 @@ def test_check_runtime_environment_detects_json_exported_variables():
             "ROUTE_FLOW_IDLE_TIMEOUT=120",
             "ROUTE_FLOW_HARD_TIMEOUT=0",
             "FLOW_INSTALL_BARRIER_TIMEOUT=0.5",
+            "SERVER_AGENT_BIND_IP=0.0.0.0",
+            "SERVER_AGENT_IP=127.0.0.1",
+            "SERVER_AGENT_PORT=6001",
+            "SERVER_AGENT_LOG_LEVEL=INFO",
+            "PATH_SERVICE_HOST=127.0.0.1",
+            "PATH_SERVICE_PORT=8889",
+            "PATH_SERVICE_TOPO=Military",
+            "PATH_SERVICE_MODEL_DIR=model/Military_mininet",
+            "WEB_PORT=6009",
             "EXTERNAL_LINK_PORTS=1:20",
             "EXTERNAL_SWITCH=s1",
             "EXTERNAL_PORT=20",
@@ -281,6 +321,12 @@ def test_check_runtime_environment_detects_json_exported_variables():
             "EXTERNAL_LINK_METRICS_JSON=[]",
             "STATIC_HYBRID_LINKS_JSON=[]",
             'TRAFFIC_CLASSES_JSON=[{"name":"task_0","port_start":1,"port_end":5000,"drl_type":0,"route_policy":"min_delay","flow_priority":30,"drl_demand_kbps":100,"drl_duration":100}]',
+            "LOG_DIR=logs",
+            "REPORT_DIR=reports",
+            "PATH_SERVICE_READY_TIMEOUT_SECONDS=90",
+            "CONTROLLER_READY_TIMEOUT_SECONDS=90",
+            "MININET_ROUTES_READY_TIMEOUT_SECONDS=240",
+            "ALLOW_EXTERNAL_INTF_HAS_DEFAULT_ROUTE=0",
         ])
     }
 
@@ -294,6 +340,128 @@ def test_check_runtime_environment_detects_json_exported_variables():
     checks = check_runtime_environment(config, runner=fake_runner)
 
     assert [(item.name, item.status) for item in checks] == [("runtime_environment", "pass")]
+
+
+def test_check_runtime_environment_detects_new_service_env_mismatch():
+    config = {
+        "runtime": {
+            "route_mode": "hybrid",
+            "drl_k_candidates": 5,
+            "drl_inference_timeout_ms": 100,
+            "drl_min_confidence": 0.5,
+            "route_flow_idle_timeout": 120,
+            "route_flow_hard_timeout": 0,
+            "flow_install_barrier_timeout": 0.5,
+        },
+        "services": {
+            "server_agent": {"bind_ip": "0.0.0.0", "port": 6101, "log_level": "INFO"},
+            "path_service": {
+                "host": "127.0.0.1",
+                "port": 8890,
+                "topo": "Military",
+                "model_dir": "model/Military_mininet",
+            },
+            "web": {"port": 6010},
+        },
+        "startup": {
+            "log_dir": "logs",
+            "report_dir": "reports",
+            "path_service_ready_timeout_seconds": 90,
+            "controller_ready_timeout_seconds": 90,
+            "mininet_routes_ready_timeout_seconds": 240,
+        },
+        "safety": {"allow_external_interface_default_route": False},
+        "hybrid": {
+            "external_switch": "s1",
+            "external_port": 20,
+            "external_link_ports": [{"dpid": 1, "port": 20}],
+            "external_arp_allowed_prefixes": ["10.0.0.0/24"],
+            "virtual_switch_dpid_max": 1000,
+            "external_link_metrics": [],
+            "static_links": [],
+            "gateway_ip": "10.0.0.254",
+            "gateway_mac": "02:00:00:00:fe:01",
+            "real_routes": ["192.168.103.0/24"],
+        },
+        "load_test": {
+            "flows": 20,
+            "duration": 10,
+            "parallel": 5,
+            "seed": 1,
+            "udp": False,
+            "bandwidth": "10M",
+        },
+        "controllers": {"ports": [6654]},
+        "validation": {"virtual_host_name": "h28"},
+        "external_interface": "ens34",
+        "traffic_classes": [
+            {
+                "name": "task_0",
+                "port_start": 1,
+                "port_end": 5000,
+                "drl_type": 0,
+                "route_policy": "min_delay",
+                "flow_priority": 30,
+                "drl_demand_kbps": 100,
+                "drl_duration": 100,
+            }
+        ],
+    }
+    proc_env = "\0".join([
+        "SERVER_AGENT_ROUTE_MODE=hybrid",
+        "DRL_ROUTE_MODE=hybrid",
+        "DRL_K_CANDIDATES=5",
+        "DRL_INFERENCE_TIMEOUT_MS=100",
+        "DRL_MIN_CONFIDENCE=0.5",
+        "ROUTE_FLOW_IDLE_TIMEOUT=120",
+        "ROUTE_FLOW_HARD_TIMEOUT=0",
+        "FLOW_INSTALL_BARRIER_TIMEOUT=0.5",
+        "EXTERNAL_LINK_PORTS=1:20",
+        "EXTERNAL_SWITCH=s1",
+        "EXTERNAL_PORT=20",
+        "EXTERNAL_ARP_ALLOWED_PREFIXES=10.0.0.0/24",
+        "VIRTUAL_SWITCH_DPID_MAX=1000",
+        "EXTERNAL_LINK_METRICS_JSON=[]",
+        "STATIC_HYBRID_LINKS_JSON=[]",
+        'TRAFFIC_CLASSES_JSON=[{"name":"task_0","port_start":1,"port_end":5000,"drl_type":0,"route_policy":"min_delay","flow_priority":30,"drl_demand_kbps":100,"drl_duration":100}]',
+        "SERVER_AGENT_PORT=6001",
+    ])
+
+    def fake_runner(command, timeout=8):
+        if command == ["ps", "-eo", "pid=,args="]:
+            return 0, "123 python3 server_agent.py hybrid\n"
+        if command == ["cat", "/proc/123/environ"]:
+            return 0, proc_env
+        raise AssertionError(f"unexpected command: {command}")
+
+    checks = check_runtime_environment(config, runner=fake_runner)
+
+    assert checks[0].status == "fail"
+    assert "SERVER_AGENT_PORT" in checks[0].details
+
+
+def test_check_web_apis_uses_configured_web_port(monkeypatch):
+    seen_urls = []
+
+    class FakeResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def fake_urlopen(url, timeout=2):
+        seen_urls.append(url)
+        return FakeResponse()
+
+    monkeypatch.setattr("tools.acceptance_health.urllib.request.urlopen", fake_urlopen)
+
+    checks = check_web_apis({"services": {"web": {"port": 6010}}})
+
+    assert seen_urls[0].startswith("http://127.0.0.1:6010/")
+    assert all(item.status == "pass" for item in checks)
 
 
 def test_check_static_hybrid_links_requires_configured_bidirectional_edges(monkeypatch):

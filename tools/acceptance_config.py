@@ -28,6 +28,33 @@ DEFAULT_RUNTIME = {
     "route_flow_hard_timeout": 0,
     "flow_install_barrier_timeout": 0.5,
 }
+DEFAULT_SERVICES = {
+    "server_agent": {
+        "bind_ip": "0.0.0.0",
+        "connect_ip": "127.0.0.1",
+        "port": 6001,
+        "log_level": "INFO",
+    },
+    "path_service": {
+        "host": "127.0.0.1",
+        "port": 8889,
+        "topo": "Military",
+        "model_dir": "model/Military_mininet",
+    },
+    "web": {
+        "port": 6009,
+    },
+}
+DEFAULT_STARTUP = {
+    "log_dir": "logs",
+    "report_dir": "reports",
+    "path_service_ready_timeout_seconds": 90,
+    "controller_ready_timeout_seconds": 90,
+    "mininet_routes_ready_timeout_seconds": 240,
+}
+DEFAULT_SAFETY = {
+    "allow_external_interface_default_route": False,
+}
 DEFAULT_LOAD_TEST = {
     "flows": 20,
     "duration": 10,
@@ -107,6 +134,20 @@ def _require_bool(value, name):
     if isinstance(value, bool):
         return value
     raise AcceptanceConfigError(f"{name} must be a boolean")
+
+
+def _require_port(value, name):
+    port = _require_int(value, name)
+    if port <= 0 or port > 65535:
+        raise AcceptanceConfigError(f"{name} must be within 1..65535")
+    return port
+
+
+def _require_non_negative_int(value, name):
+    number = _require_int(value, name)
+    if number < 0:
+        raise AcceptanceConfigError(f"{name} must be non-negative")
+    return number
 
 
 def _require_string_list(value, name):
@@ -306,6 +347,82 @@ def load_acceptance_config(path="config/hybrid_acceptance.json"):
     )
     config["runtime"] = runtime
 
+    raw_services = _require_mapping(raw.get("services", {}), "services")
+    services = {
+        "server_agent": dict(DEFAULT_SERVICES["server_agent"]),
+        "path_service": dict(DEFAULT_SERVICES["path_service"]),
+        "web": dict(DEFAULT_SERVICES["web"]),
+    }
+    for section in services:
+        services[section].update(_require_mapping(raw_services.get(section, {}), f"services.{section}"))
+    services["server_agent"]["bind_ip"] = _require_string(
+        services["server_agent"].get("bind_ip"),
+        "services.server_agent.bind_ip",
+    )
+    services["server_agent"]["connect_ip"] = _require_string(
+        services["server_agent"].get("connect_ip"),
+        "services.server_agent.connect_ip",
+    )
+    services["server_agent"]["port"] = _require_port(
+        services["server_agent"].get("port"),
+        "services.server_agent.port",
+    )
+    services["server_agent"]["log_level"] = _require_string(
+        services["server_agent"].get("log_level"),
+        "services.server_agent.log_level",
+    ).upper()
+    if services["server_agent"]["log_level"] not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+        raise AcceptanceConfigError(
+            "services.server_agent.log_level must be one of DEBUG, INFO, WARNING, ERROR, CRITICAL"
+        )
+    services["path_service"]["host"] = _require_string(
+        services["path_service"].get("host"),
+        "services.path_service.host",
+    )
+    services["path_service"]["port"] = _require_port(
+        services["path_service"].get("port"),
+        "services.path_service.port",
+    )
+    services["path_service"]["topo"] = _require_string(
+        services["path_service"].get("topo"),
+        "services.path_service.topo",
+    )
+    services["path_service"]["model_dir"] = _require_string(
+        services["path_service"].get("model_dir"),
+        "services.path_service.model_dir",
+    )
+    services["web"]["port"] = _require_port(
+        services["web"].get("port"),
+        "services.web.port",
+    )
+    config["services"] = services
+
+    startup = dict(DEFAULT_STARTUP)
+    startup.update(_require_mapping(raw.get("startup", {}), "startup"))
+    startup["log_dir"] = _require_string(startup.get("log_dir"), "startup.log_dir")
+    startup["report_dir"] = _require_string(startup.get("report_dir"), "startup.report_dir")
+    startup["path_service_ready_timeout_seconds"] = _require_non_negative_int(
+        startup.get("path_service_ready_timeout_seconds"),
+        "startup.path_service_ready_timeout_seconds",
+    )
+    startup["controller_ready_timeout_seconds"] = _require_non_negative_int(
+        startup.get("controller_ready_timeout_seconds"),
+        "startup.controller_ready_timeout_seconds",
+    )
+    startup["mininet_routes_ready_timeout_seconds"] = _require_non_negative_int(
+        startup.get("mininet_routes_ready_timeout_seconds"),
+        "startup.mininet_routes_ready_timeout_seconds",
+    )
+    config["startup"] = startup
+
+    safety = dict(DEFAULT_SAFETY)
+    safety.update(_require_mapping(raw.get("safety", {}), "safety"))
+    safety["allow_external_interface_default_route"] = _require_bool(
+        safety.get("allow_external_interface_default_route"),
+        "safety.allow_external_interface_default_route",
+    )
+    config["safety"] = safety
+
     hybrid = dict(DEFAULT_HYBRID)
     hybrid.update(_require_mapping(raw.get("hybrid"), "hybrid"))
     hybrid["external_link_ports"] = _normalize_external_link_ports(
@@ -423,12 +540,32 @@ def build_runtime_env(config):
     runtime = config["runtime"]
     hybrid = config["hybrid"]
     load_test = config["load_test"]
+    services = config.get("services", {})
+    server_agent = dict(DEFAULT_SERVICES["server_agent"])
+    server_agent.update(services.get("server_agent", {}))
+    path_service = dict(DEFAULT_SERVICES["path_service"])
+    path_service.update(services.get("path_service", {}))
+    web = dict(DEFAULT_SERVICES["web"])
+    web.update(services.get("web", {}))
+    startup = dict(DEFAULT_STARTUP)
+    startup.update(config.get("startup", {}))
+    safety = dict(DEFAULT_SAFETY)
+    safety.update(config.get("safety", {}))
     return {
         "EXTERNAL_INTF": config["external_interface"],
         "EXTERNAL_SWITCH": hybrid["external_switch"],
         "EXTERNAL_PORT": str(hybrid["external_port"]),
         "EXTERNAL_LINK_PORTS": format_external_link_ports(config),
         "CONTROLLER_PORTS": " ".join(str(port) for port in config["controllers"]["ports"]),
+        "SERVER_AGENT_BIND_IP": server_agent["bind_ip"],
+        "SERVER_AGENT_IP": server_agent["connect_ip"],
+        "SERVER_AGENT_PORT": str(server_agent["port"]),
+        "SERVER_AGENT_LOG_LEVEL": server_agent["log_level"],
+        "PATH_SERVICE_HOST": path_service["host"],
+        "PATH_SERVICE_PORT": str(path_service["port"]),
+        "PATH_SERVICE_TOPO": path_service["topo"],
+        "PATH_SERVICE_MODEL_DIR": path_service["model_dir"],
+        "WEB_PORT": str(web["port"]),
         "SERVER_AGENT_ROUTE_MODE": runtime["route_mode"],
         "DRL_ROUTE_MODE": runtime["route_mode"],
         "DRL_K_CANDIDATES": str(runtime["drl_k_candidates"]),
@@ -450,6 +587,14 @@ def build_runtime_env(config):
         "LOAD_TEST_UDP": "1" if load_test["udp"] else "0",
         "LOAD_TEST_BANDWIDTH": load_test["bandwidth"],
         "VALIDATION_VIRTUAL_HOST_NAME": config["validation"]["virtual_host_name"],
+        "LOG_DIR": startup["log_dir"],
+        "REPORT_DIR": startup["report_dir"],
+        "PATH_SERVICE_READY_TIMEOUT_SECONDS": str(startup["path_service_ready_timeout_seconds"]),
+        "CONTROLLER_READY_TIMEOUT_SECONDS": str(startup["controller_ready_timeout_seconds"]),
+        "MININET_ROUTES_READY_TIMEOUT_SECONDS": str(startup["mininet_routes_ready_timeout_seconds"]),
+        "ALLOW_EXTERNAL_INTF_HAS_DEFAULT_ROUTE": (
+            "1" if safety["allow_external_interface_default_route"] else "0"
+        ),
         "HYBRID_GATEWAY_IP": hybrid["gateway_ip"],
         "HYBRID_GATEWAY_MAC": hybrid["gateway_mac"],
         "HYBRID_REAL_ROUTES": format_real_routes(config),

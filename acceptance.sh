@@ -11,6 +11,8 @@ CONFIG="${ACCEPTANCE_CONFIG:-config/hybrid_acceptance.json}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 MININET_PYTHON="${MININET_PYTHON:-python3}"
 SERVER_AGENT_ROUTE_MODE="${SERVER_AGENT_ROUTE_MODE:-hybrid}"
+LOG_DIR="${LOG_DIR:-logs}"
+REPORT_DIR="${REPORT_DIR:-reports}"
 PYTHON_BIN_DIR="$(dirname "$PYTHON_BIN")"
 if [ -x "$PYTHON_BIN_DIR/ryu-manager" ]; then
   export PATH="$PYTHON_BIN_DIR:$PATH"
@@ -123,27 +125,27 @@ ensure_external_interface() {
 write_pid() {
   local name="$1"
   local pid="$2"
-  echo "$pid" > "logs/${name}.pid"
+  echo "$pid" > "$LOG_DIR/${name}.pid"
 }
 
 start_suite() {
-  mkdir -p logs reports
-  rm -f logs/*.log
   load_acceptance_env
+  mkdir -p "$LOG_DIR" "$REPORT_DIR"
+  rm -f "$LOG_DIR"/*.log
   ensure_external_interface
 
-  nohup setsid "$PATH_SERVICE_PYTHON" drl-or-s/path_service.py --topo Military --port 8889 --model model/Military_mininet > logs/path_service.log 2>&1 &
+  nohup setsid "$PATH_SERVICE_PYTHON" drl-or-s/path_service.py --topo "$PATH_SERVICE_TOPO" --port "$PATH_SERVICE_PORT" --model "$PATH_SERVICE_MODEL_DIR" > "$LOG_DIR/path_service.log" 2>&1 &
   write_pid path_service "$!"
-  wait_for_port 127.0.0.1 8889 90
+  wait_for_port "$PATH_SERVICE_HOST" "$PATH_SERVICE_PORT" "$PATH_SERVICE_READY_TIMEOUT_SECONDS"
 
-  nohup setsid "$PYTHON_BIN" server_agent.py "$SERVER_AGENT_ROUTE_MODE" > logs/server_agent.stdout.log 2>&1 &
+  nohup setsid "$PYTHON_BIN" server_agent.py "$SERVER_AGENT_ROUTE_MODE" > "$LOG_DIR/server_agent.stdout.log" 2>&1 &
   write_pid server_agent "$!"
   sleep 1
 
-  nohup setsid "$PYTHON_BIN" -u start_controllers_test.py start -n > logs/controllers.log 2>&1 &
+  nohup setsid "$PYTHON_BIN" -u start_controllers_test.py start -n > "$LOG_DIR/controllers.log" 2>&1 &
   write_pid start_controllers "$!"
   for port in $CONTROLLER_PORTS; do
-    wait_for_port 127.0.0.1 "$port" 90
+    wait_for_port 127.0.0.1 "$port" "$CONTROLLER_READY_TIMEOUT_SECONDS"
   done
 
   export MININET_PYTHON EXTERNAL_INTF SUDO_PASSWORD
@@ -154,9 +156,9 @@ start_suite() {
     else
       sudo -E "$MININET_PYTHON" -u testbed/creat_test_topo.py "$EXTERNAL_INTF" --hold
     fi
-  ' bash "$PWD" > logs/mininet_topology.log 2>&1 &
+  ' bash "$PWD" > "$LOG_DIR/mininet_topology.log" 2>&1 &
   write_pid mininet_topology "$!"
-  wait_for_mininet_routes "$VALIDATION_VIRTUAL_HOST_NAME" "$HYBRID_REAL_ROUTES" 240
+  wait_for_mininet_routes "$VALIDATION_VIRTUAL_HOST_NAME" "$HYBRID_REAL_ROUTES" "$MININET_ROUTES_READY_TIMEOUT_SECONDS"
 
   echo "DRL-OR-S acceptance environment started"
   echo "Web UI: http://localhost:6009"
@@ -169,8 +171,8 @@ stop_suite() {
     "$PYTHON_BIN" start_controllers_test.py stop || true
   fi
 
-  if [ -d logs ]; then
-    for pidfile in logs/*.pid; do
+  if [ -d "$LOG_DIR" ]; then
+    for pidfile in "$LOG_DIR"/*.pid; do
       [ -e "$pidfile" ] || continue
       pid="$(cat "$pidfile" 2>/dev/null || true)"
       if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then

@@ -32,6 +32,33 @@ def valid_config():
             "route_flow_hard_timeout": 0,
             "flow_install_barrier_timeout": 0.75,
         },
+        "services": {
+            "server_agent": {
+                "bind_ip": "127.0.0.1",
+                "connect_ip": "127.0.0.1",
+                "port": 6101,
+                "log_level": "DEBUG",
+            },
+            "path_service": {
+                "host": "10.0.0.9",
+                "port": 8890,
+                "topo": "Military",
+                "model_dir": "model/Military_mininet",
+            },
+            "web": {
+                "port": 6010,
+            },
+        },
+        "startup": {
+            "log_dir": "logs",
+            "report_dir": "reports",
+            "path_service_ready_timeout_seconds": 91,
+            "controller_ready_timeout_seconds": 92,
+            "mininet_routes_ready_timeout_seconds": 241,
+        },
+        "safety": {
+            "allow_external_interface_default_route": True,
+        },
         "hybrid": {
             "external_switch": "s1",
             "external_port": 20,
@@ -119,6 +146,18 @@ def test_load_acceptance_config_validates_and_preserves_required_values(tmp_path
     assert cfg["external_interface"] == "eno1"
     assert cfg["controllers"]["ports"] == [6654, 6655, 6656, 6657, 6658, 6659, 6670]
     assert cfg["runtime"]["route_mode"] == "hybrid"
+    assert cfg["services"]["server_agent"]["bind_ip"] == "127.0.0.1"
+    assert cfg["services"]["server_agent"]["connect_ip"] == "127.0.0.1"
+    assert cfg["services"]["server_agent"]["port"] == 6101
+    assert cfg["services"]["server_agent"]["log_level"] == "DEBUG"
+    assert cfg["services"]["path_service"]["port"] == 8890
+    assert cfg["services"]["path_service"]["topo"] == "Military"
+    assert cfg["services"]["path_service"]["model_dir"] == "model/Military_mininet"
+    assert cfg["services"]["web"]["port"] == 6010
+    assert cfg["startup"]["path_service_ready_timeout_seconds"] == 91
+    assert cfg["startup"]["controller_ready_timeout_seconds"] == 92
+    assert cfg["startup"]["mininet_routes_ready_timeout_seconds"] == 241
+    assert cfg["safety"]["allow_external_interface_default_route"] is True
     assert cfg["hybrid"]["external_switch"] == "s1"
     assert cfg["hybrid"]["external_port"] == 20
     assert cfg["hybrid"]["external_link_metrics"][0]["delay_ms"] == 2.5
@@ -168,6 +207,15 @@ def test_build_runtime_env_maps_config_to_existing_variables():
     assert env["EXTERNAL_PORT"] == "20"
     assert env["EXTERNAL_LINK_PORTS"] == "1:20"
     assert env["CONTROLLER_PORTS"] == "6654 6655 6656 6657 6658 6659 6670"
+    assert env["SERVER_AGENT_BIND_IP"] == "127.0.0.1"
+    assert env["SERVER_AGENT_IP"] == "127.0.0.1"
+    assert env["SERVER_AGENT_PORT"] == "6101"
+    assert env["SERVER_AGENT_LOG_LEVEL"] == "DEBUG"
+    assert env["PATH_SERVICE_HOST"] == "10.0.0.9"
+    assert env["PATH_SERVICE_PORT"] == "8890"
+    assert env["PATH_SERVICE_TOPO"] == "Military"
+    assert env["PATH_SERVICE_MODEL_DIR"] == "model/Military_mininet"
+    assert env["WEB_PORT"] == "6010"
     assert env["SERVER_AGENT_ROUTE_MODE"] == "hybrid"
     assert env["DRL_ROUTE_MODE"] == "hybrid"
     assert env["DRL_K_CANDIDATES"] == "7"
@@ -188,6 +236,12 @@ def test_build_runtime_env_maps_config_to_existing_variables():
     assert env["LOAD_TEST_FLOWS"] == "30"
     assert env["LOAD_TEST_PARALLEL"] == "6"
     assert env["VALIDATION_VIRTUAL_HOST_NAME"] == "h28"
+    assert env["LOG_DIR"] == "logs"
+    assert env["REPORT_DIR"] == "reports"
+    assert env["PATH_SERVICE_READY_TIMEOUT_SECONDS"] == "91"
+    assert env["CONTROLLER_READY_TIMEOUT_SECONDS"] == "92"
+    assert env["MININET_ROUTES_READY_TIMEOUT_SECONDS"] == "241"
+    assert env["ALLOW_EXTERNAL_INTF_HAS_DEFAULT_ROUTE"] == "1"
     assert env["HYBRID_GATEWAY_IP"] == "10.0.0.254"
     assert env["HYBRID_GATEWAY_MAC"] == "02:00:00:00:fe:01"
     assert env["HYBRID_REAL_ROUTES"] == "192.168.103.0/24"
@@ -232,6 +286,56 @@ def test_format_traffic_classes_uses_default_three_class_drl_mapping_when_missin
         },
     ]
     assert '"name":"task_2"' in format_traffic_classes(cfg)
+
+
+def test_load_acceptance_config_defaults_new_sections_for_compatibility(tmp_path):
+    data = valid_config()
+    data.pop("services")
+    data.pop("startup")
+    data.pop("safety")
+
+    cfg = load_acceptance_config(write_config(tmp_path, data))
+    env = build_runtime_env(cfg)
+
+    assert cfg["services"]["server_agent"]["bind_ip"] == "0.0.0.0"
+    assert cfg["services"]["server_agent"]["connect_ip"] == "127.0.0.1"
+    assert cfg["services"]["server_agent"]["port"] == 6001
+    assert cfg["services"]["server_agent"]["log_level"] == "INFO"
+    assert cfg["services"]["path_service"]["host"] == "127.0.0.1"
+    assert cfg["services"]["path_service"]["port"] == 8889
+    assert cfg["services"]["path_service"]["topo"] == "Military"
+    assert cfg["services"]["path_service"]["model_dir"] == "model/Military_mininet"
+    assert cfg["services"]["web"]["port"] == 6009
+    assert cfg["startup"]["path_service_ready_timeout_seconds"] == 90
+    assert cfg["startup"]["controller_ready_timeout_seconds"] == 90
+    assert cfg["startup"]["mininet_routes_ready_timeout_seconds"] == 240
+    assert cfg["safety"]["allow_external_interface_default_route"] is False
+    assert env["SERVER_AGENT_PORT"] == "6001"
+    assert env["WEB_PORT"] == "6009"
+
+
+def test_load_acceptance_config_rejects_invalid_service_port(tmp_path):
+    data = valid_config()
+    data["services"]["web"]["port"] = 70000
+
+    with pytest.raises(AcceptanceConfigError, match="services.web.port"):
+        load_acceptance_config(write_config(tmp_path, data))
+
+
+def test_load_acceptance_config_rejects_invalid_log_level(tmp_path):
+    data = valid_config()
+    data["services"]["server_agent"]["log_level"] = "LOUD"
+
+    with pytest.raises(AcceptanceConfigError, match="services.server_agent.log_level"):
+        load_acceptance_config(write_config(tmp_path, data))
+
+
+def test_load_acceptance_config_rejects_negative_startup_timeout(tmp_path):
+    data = valid_config()
+    data["startup"]["controller_ready_timeout_seconds"] = -1
+
+    with pytest.raises(AcceptanceConfigError, match="startup.controller_ready_timeout_seconds"):
+        load_acceptance_config(write_config(tmp_path, data))
 
 
 def test_load_acceptance_config_rejects_invalid_drl_type(tmp_path):

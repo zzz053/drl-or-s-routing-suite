@@ -12,6 +12,33 @@
     "route_flow_hard_timeout": 0,
     "flow_install_barrier_timeout": 0.5
   },
+  "services": {
+    "server_agent": {
+      "bind_ip": "0.0.0.0",
+      "connect_ip": "127.0.0.1",
+      "port": 6001,
+      "log_level": "INFO"
+    },
+    "path_service": {
+      "host": "127.0.0.1",
+      "port": 8889,
+      "topo": "Military",
+      "model_dir": "model/Military_mininet"
+    },
+    "web": {
+      "port": 6009
+    }
+  },
+  "startup": {
+    "log_dir": "logs",
+    "report_dir": "reports",
+    "path_service_ready_timeout_seconds": 90,
+    "controller_ready_timeout_seconds": 90,
+    "mininet_routes_ready_timeout_seconds": 240
+  },
+  "safety": {
+    "allow_external_interface_default_route": false
+  },
   "hybrid": {
     "external_switch": "s1",
     "external_port": 20,

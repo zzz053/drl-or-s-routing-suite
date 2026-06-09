@@ -23,7 +23,8 @@ from tools.web_consistency_audit import audit_payloads
 
 
 LOG_DIR = Path("logs")
-WEB_BASE_URL = "http://127.0.0.1:6009"
+WEB_BASE_HOST = "127.0.0.1"
+WEB_BASE_PORT = 6009
 SEVERE_LOG_PATTERNS = (
     "Traceback",
     "AttributeError",
@@ -175,7 +176,15 @@ def tcp_port_listening(port, host="127.0.0.1", timeout=0.3):
 
 def check_required_ports(config):
     checks = []
-    required_ports = [6001, 6009, 8889] + list(config["controllers"]["ports"])
+    services = config.get("services", {})
+    server_agent = services.get("server_agent", {})
+    path_service = services.get("path_service", {})
+    web = services.get("web", {})
+    required_ports = [
+        int(server_agent.get("port", 6001)),
+        int(web.get("port", 6009)),
+        int(path_service.get("port", 8889)),
+    ] + list(config["controllers"]["ports"])
     for port in required_ports:
         if tcp_port_listening(port):
             checks.append(CheckResult(f"port_{port}", "pass", f"端口 {port} 正在监听"))
@@ -184,8 +193,19 @@ def check_required_ports(config):
     return checks
 
 
-def check_web_apis():
+def _web_base_url(config=None):
+    if config:
+        services = config.get("services", {})
+        web = services.get("web", {})
+        port = int(web.get("port", WEB_BASE_PORT))
+    else:
+        port = WEB_BASE_PORT
+    return f"http://{WEB_BASE_HOST}:{port}"
+
+
+def check_web_apis(config=None):
     checks = []
+    base_url = _web_base_url(config)
     for path in (
         "/api/health",
         "/api/statistics",
@@ -195,7 +215,7 @@ def check_web_apis():
         "/api/graph?include_flows=0",
         "/api/route_sessions",
     ):
-        url = f"{WEB_BASE_URL}{path}"
+        url = f"{base_url}{path}"
         try:
             with urllib.request.urlopen(url, timeout=2) as resp:
                 if 200 <= resp.status < 300:
@@ -208,7 +228,7 @@ def check_web_apis():
 
 
 def fetch_web_json(path):
-    url = f"{WEB_BASE_URL}{path}"
+    url = f"{_web_base_url()}{path}"
     with urllib.request.urlopen(url, timeout=2) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
@@ -348,6 +368,15 @@ def check_runtime_environment(config, runner=run_command):
         "ROUTE_FLOW_IDLE_TIMEOUT",
         "ROUTE_FLOW_HARD_TIMEOUT",
         "FLOW_INSTALL_BARRIER_TIMEOUT",
+        "SERVER_AGENT_BIND_IP",
+        "SERVER_AGENT_IP",
+        "SERVER_AGENT_PORT",
+        "SERVER_AGENT_LOG_LEVEL",
+        "PATH_SERVICE_HOST",
+        "PATH_SERVICE_PORT",
+        "PATH_SERVICE_TOPO",
+        "PATH_SERVICE_MODEL_DIR",
+        "WEB_PORT",
         "EXTERNAL_LINK_PORTS",
         "EXTERNAL_SWITCH",
         "EXTERNAL_PORT",
@@ -356,6 +385,12 @@ def check_runtime_environment(config, runner=run_command):
         "EXTERNAL_LINK_METRICS_JSON",
         "STATIC_HYBRID_LINKS_JSON",
         "TRAFFIC_CLASSES_JSON",
+        "LOG_DIR",
+        "REPORT_DIR",
+        "PATH_SERVICE_READY_TIMEOUT_SECONDS",
+        "CONTROLLER_READY_TIMEOUT_SECONDS",
+        "MININET_ROUTES_READY_TIMEOUT_SECONDS",
+        "ALLOW_EXTERNAL_INTF_HAS_DEFAULT_ROUTE",
     ]
 
     code, output = runner(["ps", "-eo", "pid=,args="], timeout=5)
@@ -566,7 +601,7 @@ def run_health(config_path="config/hybrid_acceptance.json"):
     control_checks.extend(check_runtime_environment(config))
     control_checks.extend(check_external_interface(config))
     control_checks.extend(check_required_ports(config))
-    control_checks.extend(check_web_apis())
+    control_checks.extend(check_web_apis(config))
     control_checks.extend(check_web_consistency())
     control_checks.extend(check_static_hybrid_links(config))
     control_checks.extend(check_recent_logs())

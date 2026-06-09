@@ -223,9 +223,29 @@ Web/API 提供运行态观测和调试入口：
 - `acceptance.sh`：面向验收的一键生命周期入口。
 - `acceptance.sh audit`：静态审计项目核心功能是否仍被代码覆盖，适合在未接入真实交换机前先检查交付完整性。
 - `acceptance.sh load`：在已运行的 Mininet 拓扑中随机选择主机对并发执行 `iperf3`，用于网络负载能力测试。
+- `tools/build_delivery_package.py`：生成简易源码隐藏运行包，核心 Python 代码以 `.pyc` 形式进入 `/opt/drl-ors`，JSON 配置外置到 `/etc/drl-ors`。
 - `start_controllers_test.py`：批量启动/停止控制器。
 - `testbed/creat_test_topo.py`：创建项目内置 Mininet 拓扑。
 - `testbed/hybrid_external_interface.py`：把 VM 外部网卡接入边界 OVS。
+
+简易交付包生成命令：
+
+```bash
+python tools/build_delivery_package.py --output dist/drl-ors-runtime
+```
+
+生成后的目录约定：
+
+```text
+opt/drl-ors/                  # 编译后的运行代码、模型和拓扑资源
+etc/drl-ors/config.json       # 现场可修改配置
+usr/local/bin/drl-orsctl      # start/stop/health/report/load/audit 入口
+etc/systemd/system/drl-ors.service
+var/log/drl-ors/
+var/lib/drl-ors/reports/
+```
+
+该方案只隐藏第一方 `.py` 源码，不是加密。现场可以修改 JSON 配置、网口、DPID/端口、真实主机、业务端口分类、日志和报告目录；核心控制器、路径服务和 Web/API 逻辑不作为现场修改面。
 
 ## 4. Web 界面使用方法
 
@@ -390,6 +410,7 @@ drl-or-s-routing-suite/
   controller.py                       # Ryu 控制器
   common_config.py                    # 控制器公共配置
   config/hybrid_acceptance.json       # 验收配置
+  tools/build_delivery_package.py     # 源码隐藏运行包构建
   tools/acceptance_config.py          # 配置校验
   tools/acceptance_health.py          # 健康检查
   tools/generate_acceptance_report.py # 报告生成
