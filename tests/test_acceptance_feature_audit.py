@@ -1,3 +1,4 @@
+import tools.acceptance_feature_audit as feature_audit
 from tools.acceptance_feature_audit import audit_features, classify_audit
 
 
@@ -36,3 +37,26 @@ def test_classify_audit_fails_when_required_feature_is_missing():
     ]
 
     assert classify_audit(features) == "fail"
+
+
+def test_feature_audit_accepts_cython_protected_files(monkeypatch, tmp_path):
+    (tmp_path / "CYTHON_BUILD_MANIFEST.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "server_agent_core.so").write_bytes(b"native-extension")
+    (tmp_path / "acceptance.sh").write_text("start)\n", encoding="utf-8")
+
+    monkeypatch.setattr(feature_audit, "ROOT_DIR", tmp_path)
+    monkeypatch.setattr(feature_audit, "FEATURES", [
+        {
+            "name": "protected_core_feature",
+            "files": {
+                "server_agent.py": ["class ServerAgent", "def add_manual_flow"],
+                "acceptance.sh": ["start)"],
+            },
+            "message": "protected core exists and non-core source markers exist",
+        },
+    ])
+
+    result = feature_audit.audit_features()
+
+    assert result["status"] == "pass"
+    assert result["features"][0]["status"] == "pass"

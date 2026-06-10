@@ -79,7 +79,7 @@ def test_traffic_classes_parse_json_and_build_task_maps(monkeypatch):
             {
                 "name": "task_0",
                 "port_start": 1,
-                "port_end": 5000,
+                "port_end": 16384,
                 "drl_type": 0,
                 "route_policy": "min_delay",
                 "flow_priority": 30,
@@ -88,11 +88,21 @@ def test_traffic_classes_parse_json_and_build_task_maps(monkeypatch):
             },
             {
                 "name": "task_1",
-                "port_start": 5001,
-                "port_end": 10000,
+                "port_start": 16385,
+                "port_end": 32768,
                 "drl_type": 1,
                 "route_policy": "max_bandwidth",
                 "flow_priority": 20,
+                "drl_demand_kbps": 1500,
+                "drl_duration": 100,
+            },
+            {
+                "name": "task_3",
+                "port_start": 49153,
+                "port_end": 65535,
+                "drl_type": 3,
+                "route_policy": "min_loss",
+                "flow_priority": 5,
                 "drl_demand_kbps": 1500,
                 "drl_duration": 100,
             },
@@ -103,14 +113,17 @@ def test_traffic_classes_parse_json_and_build_task_maps(monkeypatch):
     importlib.reload(common_config)
 
     assert common_config.HOST_PORT_TASK_RANGES == [
-        (1, 5000, "task_0"),
-        (5001, 10000, "task_1"),
+        (1, 16384, "task_0"),
+        (16385, 32768, "task_1"),
+        (49153, 65535, "task_3"),
     ]
     assert common_config.TASK_POLICY_MAP["task_0"] == "min_delay"
     assert common_config.TASK_POLICY_MAP["task_1"] == "max_bandwidth"
+    assert common_config.TASK_POLICY_MAP["task_3"] == "min_loss"
     assert common_config.TASK_PRIORITY_MAP["task_1"] == 20
-    assert common_config.TASK_DRL_MAP["task_1"] == {
-        "drl_type": 1,
+    assert common_config.TASK_PRIORITY_MAP["task_3"] == 5
+    assert common_config.TASK_DRL_MAP["task_3"] == {
+        "drl_type": 3,
         "drl_demand_kbps": 1500,
         "drl_duration": 100,
     }

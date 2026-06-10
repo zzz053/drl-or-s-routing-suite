@@ -14,6 +14,7 @@ SERVER_AGENT_ROUTE_MODE="${SERVER_AGENT_ROUTE_MODE:-hybrid}"
 LOG_DIR="${LOG_DIR:-logs}"
 REPORT_DIR="${REPORT_DIR:-reports}"
 PYTHON_BIN_DIR="$(dirname "$PYTHON_BIN")"
+export PYTHONPATH="$PWD:${PYTHONPATH:-}"
 if [ -x "$PYTHON_BIN_DIR/ryu-manager" ]; then
   export PATH="$PYTHON_BIN_DIR:$PATH"
 fi
@@ -182,9 +183,9 @@ stop_suite() {
     done
   fi
 
-  pkill -f "[s]erver_agent.py" 2>/dev/null || true
-  pkill -f "[d]rl-or-s/path_service.py" 2>/dev/null || true
-  pkill -f "[t]estbed/creat_test_topo.py" 2>/dev/null || true
+  sudo_cmd pkill -f "[s]erver_agent.py" 2>/dev/null || true
+  sudo_cmd pkill -f "[d]rl-or-s/path_service.py" 2>/dev/null || true
+  sudo_cmd pkill -f "[t]estbed/creat_test_topo.py" 2>/dev/null || true
 
   if command -v sudo >/dev/null 2>&1; then
     sudo_cmd mn -c || true

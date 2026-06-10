@@ -102,7 +102,7 @@ DEFAULT_TRAFFIC_CLASSES = [
     {
         "name": "task_0",
         "port_start": 1,
-        "port_end": 5000,
+        "port_end": 16384,
         "drl_type": 0,
         "route_policy": "min_delay",
         "flow_priority": 30,
@@ -111,8 +111,8 @@ DEFAULT_TRAFFIC_CLASSES = [
     },
     {
         "name": "task_1",
-        "port_start": 5001,
-        "port_end": 10000,
+        "port_start": 16385,
+        "port_end": 32768,
         "drl_type": 1,
         "route_policy": "max_bandwidth",
         "flow_priority": 20,
@@ -121,11 +121,21 @@ DEFAULT_TRAFFIC_CLASSES = [
     },
     {
         "name": "task_2",
-        "port_start": 10001,
-        "port_end": 65535,
+        "port_start": 32769,
+        "port_end": 49152,
         "drl_type": 2,
         "route_policy": "hybrid",
         "flow_priority": 10,
+        "drl_demand_kbps": 1500,
+        "drl_duration": 100,
+    },
+    {
+        "name": "task_3",
+        "port_start": 49153,
+        "port_end": 65535,
+        "drl_type": 3,
+        "route_policy": "min_loss",
+        "flow_priority": 5,
         "drl_demand_kbps": 1500,
         "drl_duration": 100,
     },
@@ -160,7 +170,7 @@ def _parse_traffic_classes(raw_value):
             continue
         if port_start <= 0 or port_end < port_start or port_end > 65535:
             continue
-        if drl_type not in (0, 1, 2):
+        if drl_type not in (0, 1, 2, 3):
             continue
         if flow_priority <= 0 or drl_demand_kbps <= 0 or drl_duration <= 0:
             continue

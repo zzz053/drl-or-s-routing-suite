@@ -759,7 +759,7 @@ class DRLPathService(object):
                 traceback.print_exc()
 
 
-if __name__ == "__main__":
+def main(argv=None):
     parser = argparse.ArgumentParser(description="DRL 路径计算服务 v2")
     parser.add_argument("--topo", default="Military", help="拓扑名称")
     parser.add_argument("--port", type=int, default=8889, help="监听端口")
@@ -768,7 +768,7 @@ if __name__ == "__main__":
         default=None,
         help="DRL 模型路径。相对路径按 drl-or-s 目录解析，默认使用 ./model/Military_mininet",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     print("=" * 60)
     print("DRL 路径计算服务 v2")
@@ -779,3 +779,8 @@ if __name__ == "__main__":
         service.run()
     except KeyboardInterrupt:
         print("\n[服务] 已停止")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -73,9 +73,9 @@ def test_acceptance_script_adds_python_bin_dir_to_path_for_ryu_manager():
 def test_acceptance_stop_cleans_stale_project_processes():
     text = (ROOT / "acceptance.sh").read_text(encoding="utf-8")
 
-    assert 'pkill -f "[s]erver_agent.py"' in text
-    assert 'pkill -f "[d]rl-or-s/path_service.py"' in text
-    assert 'pkill -f "[t]estbed/creat_test_topo.py"' in text
+    assert 'sudo_cmd pkill -f "[s]erver_agent.py"' in text
+    assert 'sudo_cmd pkill -f "[d]rl-or-s/path_service.py"' in text
+    assert 'sudo_cmd pkill -f "[t]estbed/creat_test_topo.py"' in text
 
 
 def test_acceptance_start_waits_for_services_and_clears_stale_logs():

@@ -18,6 +18,37 @@ from typing import Iterable
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 
+CYTHON_PROTECTED_FILES = {
+    "common_config.py",
+    "controller.py",
+    "controller_helpers.py",
+    "external_host_guard.py",
+    "host_model.py",
+    "hybrid_gateway.py",
+    "network_metrics.py",
+    "packetin_arp.py",
+    "packetin_ip.py",
+    "packetin_lldp.py",
+    "routing_policy.py",
+    "server_agent.py",
+    "server_message_handlers.py",
+    "server_path_service.py",
+    "web_api.py",
+    "web_ui_html.py",
+    "drl-or-s/path_service.py",
+}
+
+CYTHON_PROTECTED_PREFIXES = (
+    "drl-or-s/a2c_ppo_acktr/",
+    "drl-or-s/net_env/",
+)
+
+CYTHON_MODULE_OVERRIDES = {
+    "controller.py": "controller_core",
+    "server_agent.py": "server_agent_core",
+    "drl-or-s/path_service.py": "path_service_core",
+}
+
 
 @dataclass
 class FeatureCheck:
@@ -165,7 +196,47 @@ def _read_text(path: str) -> str:
     return (ROOT_DIR / path).read_text(encoding="utf-8", errors="replace")
 
 
+def _is_cython_delivery_runtime() -> bool:
+    try:
+        return (ROOT_DIR / "CYTHON_BUILD_MANIFEST.json").exists() or any(ROOT_DIR.glob("*.so"))
+    except OSError:
+        return False
+
+
+def _is_cython_protected_path(path: str) -> bool:
+    normalized = path.replace("\\", "/")
+    return (
+        normalized in CYTHON_PROTECTED_FILES
+        or any(normalized.startswith(prefix) for prefix in CYTHON_PROTECTED_PREFIXES)
+    )
+
+
+def _module_name_for_path(path: str) -> str:
+    normalized = path.replace("\\", "/")
+    if normalized in CYTHON_MODULE_OVERRIDES:
+        return CYTHON_MODULE_OVERRIDES[normalized]
+    if normalized.startswith("drl-or-s/"):
+        normalized = normalized[len("drl-or-s/"):]
+    return normalized[:-3].replace("/", ".")
+
+
+def _compiled_module_exists(path: str) -> bool:
+    module_name = _module_name_for_path(path)
+    module_path = Path(*module_name.split("."))
+    search_root = ROOT_DIR
+    if path.replace("\\", "/").startswith("drl-or-s/") and module_name == "path_service_core":
+        search_root = ROOT_DIR / "drl-or-s"
+        module_path = Path(module_name)
+    candidates = list((search_root / module_path.parent).glob(f"{module_path.name}*.so"))
+    candidates.extend((search_root / module_path.parent).glob(f"{module_path.name}*.pyd"))
+    return any(candidate.is_file() for candidate in candidates)
+
+
 def _missing_markers(path: str, markers: Iterable[str]) -> list[str]:
+    if _is_cython_delivery_runtime() and _is_cython_protected_path(path):
+        if _compiled_module_exists(path):
+            return []
+        return [f"<compiled module missing for protected path: {path}>"]
     try:
         text = _read_text(path)
     except OSError:

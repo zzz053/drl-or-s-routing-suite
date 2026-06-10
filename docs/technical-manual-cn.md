@@ -1,10 +1,12 @@
 # DRL-OR-S Routing Suite 技术手册
 
-本文档用于指导 DRL-OR-S Routing Suite 在 Linux/VM/真实 SDN 交换机环境中的部署、运行、验收测试和故障定位。文档采用通用参数描述，现场部署时应将 `<...>` 占位符替换为实际环境值。
+本文档用于指导 DRL-OR-S Routing Suite 在 Linux/VM/真实 SDN 交换机环境中的部署、运行、验收测试和故障定位。文档尽量用直白语言说明每个组件“做什么、什么时候用、看什么结果”。现场部署时，应将 `<...>` 占位符替换为实际环境值。
 
 ## 1. 系统定位
 
-DRL-OR-S Routing Suite 是一个多域 SDN 路由、仿真验证与虚实通信系统，主要能力包括：
+DRL-OR-S Routing Suite 可以理解为一套“自动选路和验证工具”。它把虚拟网络、真实 SDN 交换机和 Web 展示放在一套流程里：业务流量进来后，控制器识别业务类型，路径服务给出推荐路径，控制器再把转发表下发到交换机。普通使用者重点关注三件事：系统是否启动成功、业务被分到哪一类、虚拟主机到真实主机是否能通。
+
+系统主要能力包括：
 
 - 启动多域 Ryu 控制器并管理 OpenFlow 交换机。
 - 启动 `server_agent.py` 汇聚控制器状态、路径会话和 Web/API。
@@ -15,6 +17,8 @@ DRL-OR-S Routing Suite 是一个多域 SDN 路由、仿真验证与虚实通信�
 - 自动执行健康检查并生成验收报告。
 
 ## 2. 架构概览
+
+下面这张图表示数据和控制信息大致经过哪些组件。可以把 `server_agent.py` 看成总调度，`path_service.py` 看成路径计算助手，Ryu controllers 看成真正给交换机下发规则的控制器，Web 页面则负责把状态展示出来。
 
 ```text
 浏览器 / API 客户端
@@ -104,17 +108,25 @@ VM 外部网卡 <EXTERNAL_INTERFACE>
 TCP/UDP 源/目的端口 -> task_type -> route_policy / flow_priority -> drl_type / drl_demand_kbps / drl_duration
 ```
 
-默认三类业务如下：
+默认四类业务如下：
 
 | 端口范围 | 业务类 | DRL rtype | 路由策略 | 流表优先级 | DRL 需求 |
 | --- | --- | ---: | --- | ---: | ---: |
-| `1-5000` | `task_0` | `0` | `min_delay` | `30` | `100Kbps` |
-| `5001-10000` | `task_1` | `1` | `max_bandwidth` | `20` | `1500Kbps` |
-| `10001-65535` | `task_2` | `2` | `hybrid` | `10` | `1500Kbps` |
+| `1-16384` | `task_0` | `0` | `min_delay` | `30` | `100Kbps` |
+| `16385-32768` | `task_1` | `1` | `max_bandwidth` | `20` | `1500Kbps` |
+| `32769-49152` | `task_2` | `2` | `hybrid` | `10` | `1500Kbps` |
+| `49153-65535` | `task_3` | `3` | `min_loss` | `5` | `1500Kbps` |
 
-分类规则是先匹配目的端口，再匹配源端口；非 TCP/UDP 流量或未命中端口范围时使用 `default`。`rtype 3` 是 DRL-OR-S 训练环境中的丢包敏感类型，当前甲方需求为三类业务，因此默认不对外暴露。
+通俗理解：
 
-控制器把业务元数据放入路径请求和路径会话；`server_agent.py` 再把 `drl_type`、`drl_demand_kbps`、`drl_duration` 透传给 `drl-or-s/path_service.py`。如果 DRL 依赖或模型不可用，路径仍可回退到 Dijkstra/fallback，但 Web 和日志中仍会保留业务分类元数据。
+- `task_0 / rtype 0` 更看重时延，适合需要尽快送达的小流量或交互类业务。
+- `task_1 / rtype 1` 更看重带宽，适合吞吐量更重要的业务。
+- `task_2 / rtype 2` 使用综合策略，在时延、带宽和丢包之间做平衡。
+- `task_3 / rtype 3` 是丢包敏感类型，默认使用 `min_loss`，优先选择丢包率更低的路径。
+
+分类规则是先匹配目的端口，再匹配源端口。例如一个 TCP 包的目的端口是 `50000`，即使源端口落在其他范围，也会先被分到 `task_3`。非 TCP/UDP 流量，例如 ICMP ping，或者没有命中任何端口范围的流量，使用 `default`。`default` 不等于 `rtype 3`，它只是系统兜底路径，默认走普通最短路径和最低流表优先级。
+
+控制器把业务元数据放入路径请求和路径会话；`server_agent.py` 再把 `drl_type`、`drl_demand_kbps`、`drl_duration` 透传给 `drl-or-s/path_service.py`。如果 DRL 依赖或模型不可用，路径仍可回退到 Dijkstra/fallback，但 Web 路径会话、日志和 API 中仍会保留 `task_type`、`route_policy`、`drl_type/rtype`、`drl_demand_kbps` 和 `drl_duration`，便于核对分类是否正确。
 
 ### 3.5 流表下发与生命周期
 
@@ -508,7 +520,7 @@ config/hybrid_acceptance.json
     {
       "name": "task_0",
       "port_start": 1,
-      "port_end": 5000,
+      "port_end": 16384,
       "drl_type": 0,
       "route_policy": "min_delay",
       "flow_priority": 30,
@@ -517,8 +529,8 @@ config/hybrid_acceptance.json
     },
     {
       "name": "task_1",
-      "port_start": 5001,
-      "port_end": 10000,
+      "port_start": 16385,
+      "port_end": 32768,
       "drl_type": 1,
       "route_policy": "max_bandwidth",
       "flow_priority": 20,
@@ -527,11 +539,21 @@ config/hybrid_acceptance.json
     },
     {
       "name": "task_2",
-      "port_start": 10001,
-      "port_end": 65535,
+      "port_start": 32769,
+      "port_end": 49152,
       "drl_type": 2,
       "route_policy": "hybrid",
       "flow_priority": 10,
+      "drl_demand_kbps": 1500,
+      "drl_duration": 100
+    },
+    {
+      "name": "task_3",
+      "port_start": 49153,
+      "port_end": 65535,
+      "drl_type": 3,
+      "route_policy": "min_loss",
+      "flow_priority": 5,
       "drl_demand_kbps": 1500,
       "drl_duration": 100
     }
@@ -560,7 +582,19 @@ config/hybrid_acceptance.json
 
 以上字段必须按现场拓扑填写，不应沿用旧实验环境中的主机名、IP、端口或网段。
 
-`traffic_classes` 会在 `acceptance.sh start` 时由 `tools/acceptance_config.py` 校验并导出为 `TRAFFIC_CLASSES_JSON`。控制器运行时以该环境变量为准；如果 JSON 中缺少该段，系统使用默认三类端口映射。配置校验会拒绝空列表、重复名称、非法端口、非正优先级、非正 DRL 需求/持续时间，以及当前未开放的 `drl_type=3`。
+`traffic_classes` 会在 `acceptance.sh start` 时由 `tools/acceptance_config.py` 校验并导出为 `TRAFFIC_CLASSES_JSON`。控制器运行时以该环境变量为准；如果 JSON 中缺少该段，系统使用默认四类端口映射。配置校验会拒绝空列表、重复名称、非法端口、非正优先级、非正 DRL 需求/持续时间，以及不在 `0,1,2,3` 范围内的 `drl_type`。
+
+`traffic_classes` 里每个字段的含义如下：
+
+| 字段 | 给非技术人员的解释 |
+| --- | --- |
+| `name` | 系统内部显示的业务类名称，例如 `task_3`。 |
+| `port_start` / `port_end` | 这一类业务覆盖的 TCP/UDP 端口闭区间，包含起点和终点。 |
+| `drl_type` | 传给 DRL 路径服务的业务编号，也常写作 `rtype`。 |
+| `route_policy` | DRL 不可用或需要计算候选路径时采用的工程策略，例如 `min_loss` 表示尽量避开丢包高的链路。 |
+| `flow_priority` | 下发到交换机的流表优先级，数字越大越先匹配。 |
+| `drl_demand_kbps` | 告诉 DRL 服务该业务大致需要多少带宽。 |
+| `drl_duration` | 告诉 DRL 服务该业务预计持续多久，用于模型输入。 |
 
 ## 9. 环境变量
 

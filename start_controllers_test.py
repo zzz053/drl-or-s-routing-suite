@@ -31,11 +31,20 @@ TEST_CONTROLLER_PORTS = parse_controller_ports(
 DEFAULT_USE_TERMINAL = False
 
 
+def select_controller_app(runtime_dir=None):
+    runtime_dir = Path(runtime_dir) if runtime_dir is not None else Path(__file__).resolve().parent
+    if (runtime_dir / "controller.py").exists():
+        return "controller.py"
+    if (runtime_dir / "controller.pyc").exists():
+        return "controller.pyc"
+    return "controller.py"
+
+
 def build_manager(use_terminal=DEFAULT_USE_TERMINAL):
     manager = ControllerManager(
         base_port=6654,
         num_controllers=len(TEST_CONTROLLER_PORTS),
-        controller_app='controller.py',
+        controller_app=select_controller_app(),
         use_terminal=use_terminal,
     )
     manager.pid_file = Path('/tmp/ryu_controllers_test.pid')

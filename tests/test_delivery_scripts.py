@@ -48,6 +48,12 @@ def test_start_suite_allows_runtime_python_and_route_mode_overrides():
     assert '"$PYTHON_BIN" server_agent.py "$SERVER_AGENT_ROUTE_MODE"' in text
 
 
+def test_acceptance_script_exports_runtime_pythonpath():
+    text = (ROOT / "acceptance.sh").read_text(encoding="utf-8")
+
+    assert 'export PYTHONPATH="$PWD:${PYTHONPATH:-}"' in text
+
+
 def test_start_suite_supports_optional_external_interface():
     text = (ROOT / "start_suite.sh").read_text(encoding="utf-8")
 
@@ -97,3 +103,5 @@ def test_standalone_metadata_is_packaged():
     assert "__pycache__/" in gitignore
     assert "logs/" in gitignore
     assert "self-contained" in readme
+    assert "dist/drl-ors-runtime-cython" in readme
+    assert "docs/cython-delivery-user-guide-cn.md" in readme
