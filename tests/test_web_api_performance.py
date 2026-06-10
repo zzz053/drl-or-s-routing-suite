@@ -34,3 +34,11 @@ def test_graph_node_payload_can_include_flow_table_on_demand():
 
     assert result["flow_table"] == flow_table
     assert result["flow_count"] == 1
+
+
+def test_route_session_api_preserves_drl_service_metadata():
+    text = (ROOT / "web_api.py").read_text(encoding="utf-8")
+
+    assert "'drl_type': raw.get('drl_type')" in text
+    assert "'drl_demand_kbps': raw.get('drl_demand_kbps')" in text
+    assert "'drl_duration': raw.get('drl_duration')" in text

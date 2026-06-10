@@ -48,6 +48,12 @@ def test_start_suite_allows_runtime_python_and_route_mode_overrides():
     assert '"$PYTHON_BIN" server_agent.py "$SERVER_AGENT_ROUTE_MODE"' in text
 
 
+def test_acceptance_script_exports_runtime_pythonpath():
+    text = (ROOT / "acceptance.sh").read_text(encoding="utf-8")
+
+    assert 'export PYTHONPATH="$PWD:${PYTHONPATH:-}"' in text
+
+
 def test_start_suite_supports_optional_external_interface():
     text = (ROOT / "start_suite.sh").read_text(encoding="utf-8")
 
@@ -62,6 +68,14 @@ def test_topology_installs_real_subnet_routes_via_virtual_gateway():
     assert "configure_hybrid_host_routes(" in text
     assert "HYBRID_GATEWAY_IP" in text
     assert "HYBRID_REAL_ROUTES" in text
+
+
+def test_topology_supports_noninteractive_hold_mode_for_acceptance():
+    text = (ROOT / "testbed" / "creat_test_topo.py").read_text(encoding="utf-8")
+
+    assert "hold=False" in text
+    assert "while True:" in text
+    assert "--hold" in text
 
 
 def test_drl_assets_are_packaged_for_standalone_delivery():
@@ -89,3 +103,5 @@ def test_standalone_metadata_is_packaged():
     assert "__pycache__/" in gitignore
     assert "logs/" in gitignore
     assert "self-contained" in readme
+    assert "dist/drl-ors-runtime-cython" in readme
+    assert "docs/cython-delivery-user-guide-cn.md" in readme

@@ -154,6 +154,9 @@ def handle_path_request_with_policy(graph, message, link_down_set=None):
             'in_port': message.get('in_port'),
             'task_type': task_type,
             'route_policy': route_policy,
+            'drl_type': message.get('drl_type'),
+            'drl_demand_kbps': message.get('drl_demand_kbps'),
+            'drl_duration': message.get('drl_duration'),
             'path_source': 'dijkstra',
             'hop_ports': build_hop_ports(graph, path),
         }

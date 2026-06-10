@@ -77,6 +77,13 @@ class WebStateStore:
         return payload
 
     def _build_graph_payload(self, include_flows=False):
+        graph_lock = getattr(self.server_agent, 'graph_lock', None)
+        if graph_lock is not None:
+            with graph_lock:
+                return self._build_graph_payload_locked(include_flows=include_flows)
+        return self._build_graph_payload_locked(include_flows=include_flows)
+
+    def _build_graph_payload_locked(self, include_flows=False):
         graph = self.server_agent.G
         nodes_list = []
         for node_id, node_data in graph.nodes(data=True):
@@ -102,6 +109,28 @@ class WebStateStore:
                 )
 
             node_payload = _prepare_node_data_for_graph(node_data, include_flows=include_flows)
+            if node_type == 'switch':
+                switch_links = [
+                    dict(graph.get_edge_data(node_id, neighbor) or {})
+                    for neighbor in neighbors
+                    if (graph.get_edge_data(node_id, neighbor) or {}).get('edge_type') == 'switch_link'
+                ]
+                utilizations = [
+                    float(link.get('utilization_percent', 0) or 0)
+                    for link in switch_links
+                ]
+                node_payload['throughput_mbps'] = sum(
+                    float(link.get('throughput_mbps', 0) or 0)
+                    for link in switch_links
+                )
+                node_payload['avg_utilization_percent'] = (
+                    sum(utilizations) / len(utilizations) if utilizations else 0.0
+                )
+                node_payload['error_port_count'] = sum(
+                    1 for link in switch_links
+                    if float(link.get('error_rate', 0) or 0) > 0
+                    or float(link.get('drop_rate', 0) or 0) > 0
+                )
             node_payload['connection_counts'] = connection_counts
             nodes_list.append({'id': safe_id, 'data': node_payload})
 

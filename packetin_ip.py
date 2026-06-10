@@ -52,6 +52,7 @@ def handle_host_ip_packet_in(app, ev):
 
         task_type = app._get_task_type_by_host_ports(sport, dport)
         route_policy = app._get_policy_for_task(task_type)
+        drl_meta = app._get_drl_metadata_for_task(task_type)
 
         if app.ip_packet_log_enable and eth.ethertype == ether_types.ETH_TYPE_IP:
             app.logger.info("11_host_ip_packet_in_handle收到IP数据包: 源IP=%s,目标IP=%s,源MAC=%s,目标MAC=%s,交换机=%s,端口=%s",
@@ -166,6 +167,9 @@ def handle_host_ip_packet_in(app, ev):
                     'l4_match': l4_fwd,
                     'switch_id': dpid,
                     'in_port': in_port,
+                    'drl_type': drl_meta['drl_type'],
+                    'drl_demand_kbps': drl_meta['drl_demand_kbps'],
+                    'drl_duration': drl_meta['drl_duration'],
                 })
         else:
             app.logger.info("【尝试】未找到最短路径，使用直接路径")
@@ -183,4 +187,7 @@ def handle_host_ip_packet_in(app, ev):
                     'l4_match': l4_fwd,
                     'switch_id': dpid,
                     'in_port': in_port,
+                    'drl_type': drl_meta['drl_type'],
+                    'drl_demand_kbps': drl_meta['drl_demand_kbps'],
+                    'drl_duration': drl_meta['drl_duration'],
                 })

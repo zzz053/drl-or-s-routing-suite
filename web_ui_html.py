@@ -695,7 +695,7 @@ def get_web_ui_html():
                         <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
                     </svg>
                     <div class="metric-content">
-                        <span class="metric-label">Global Throughput</span>
+                        <span class="metric-label">Network Throughput</span>
                         <span class="metric-value" id="metric-throughput">0 Mbps</span>
             </div>
         </div>
@@ -704,8 +704,8 @@ def get_web_ui_html():
                         <polyline points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
                     </svg>
                     <div class="metric-content">
-                        <span class="metric-label">Avg Latency</span>
-                        <span class="metric-value" id="metric-latency">0 ms</span>
+                        <span class="metric-label">Avg Utilization</span>
+                        <span class="metric-value" id="metric-utilization">0%</span>
             </div>
                 </div>
                 <div class="header-controls">
@@ -1167,7 +1167,12 @@ def get_web_ui_html():
                 const source = item.decision_source || item.path_source || 'unknown';
                 const modelUsed = item.model_used ? 'model' : 'fallback';
                 const reason = item.fallback_reason || '';
-                const decisionText = source + ' / ' + modelUsed + (reason ? ' / ' + reason : '');
+                const drlMeta = (item.drl_type !== undefined && item.drl_type !== null)
+                    ? ' / ' + (item.task_type || 'default') + ' / rtype=' + item.drl_type +
+                        (item.drl_demand_kbps ? ' / demand=' + item.drl_demand_kbps + 'Kbps' : '') +
+                        (item.drl_duration ? ' / duration=' + item.drl_duration : '')
+                    : '';
+                const decisionText = source + ' / ' + modelUsed + drlMeta + (reason ? ' / ' + reason : '');
                 return (
                     '<div class="route-session-item' + activeClass + '" data-session-id="' + sanitizeHtml(item.id) + '">' +
                         '<div class="route-session-path">' + sanitizeHtml(pathText || '-') + '</div>' +
@@ -1469,8 +1474,31 @@ def get_web_ui_html():
                 if (incoming.bw !== undefined || merged.bw !== undefined) {
                     merged.bw = pickNumeric(merged.bw, incoming.bw, 'min');
                 }
+                if (incoming.capacity_mbps !== undefined || merged.capacity_mbps !== undefined) {
+                    merged.capacity_mbps = pickNumeric(merged.capacity_mbps, incoming.capacity_mbps, 'min');
+                }
+                if (incoming.throughput_mbps !== undefined || merged.throughput_mbps !== undefined) {
+                    merged.throughput_mbps =
+                        (Number(merged.throughput_mbps) || 0) + (Number(incoming.throughput_mbps) || 0);
+                }
+                if (incoming.utilization_percent !== undefined || merged.utilization_percent !== undefined) {
+                    merged.utilization_percent = pickNumeric(
+                        merged.utilization_percent, incoming.utilization_percent, 'max');
+                }
+                if (incoming.drop_rate !== undefined || merged.drop_rate !== undefined) {
+                    merged.drop_rate = pickNumeric(merged.drop_rate, incoming.drop_rate, 'max');
+                }
+                if (incoming.error_rate !== undefined || merged.error_rate !== undefined) {
+                    merged.error_rate = pickNumeric(merged.error_rate, incoming.error_rate, 'max');
+                }
                 if (incoming.loss !== undefined || merged.loss !== undefined) {
                     merged.loss = pickNumeric(merged.loss, incoming.loss, 'max');
+                }
+                if (incoming.bandwidth_source !== undefined && merged.bandwidth_source === undefined) {
+                    merged.bandwidth_source = incoming.bandwidth_source;
+                }
+                if (incoming.port_state !== undefined && merged.port_state === undefined) {
+                    merged.port_state = incoming.port_state;
                 }
                 if (incoming.src_port !== undefined && merged.src_port === undefined) merged.src_port = incoming.src_port;
                 if (incoming.dst_port !== undefined && merged.dst_port === undefined) merged.dst_port = incoming.dst_port;
@@ -2327,7 +2355,7 @@ def get_web_ui_html():
                 isRefreshInFlight = false;
             }
         }
-        
+
         // 更新网络图
         function updateNetwork(data) {
             try {
@@ -2814,18 +2842,23 @@ def get_web_ui_html():
             }
         }
         
+        function formatMetricValue(value, unit) {
+            const n = Number(value);
+            if (!Number.isFinite(n)) return '0 ' + unit;
+            return n.toFixed(3) + ' ' + unit;
+        }
+
         // 更新统计信息
         async function updateStatistics() {
             try {
                 const response = await fetch('/api/statistics');
                 const stats = await response.json();
                 
-                // 计算全局指标（简化计算）
-                const totalThroughput = (stats.switches || 0) * 100; // 假设每个交换机100Mbps
-                const avgLatency = 10 + Math.floor(Math.random() * 10); // 模拟延迟
-                
-                document.getElementById('metric-throughput').textContent = totalThroughput + ' Mbps';
-                document.getElementById('metric-latency').textContent = avgLatency + ' ms';
+                const network = stats.network || {};
+                document.getElementById('metric-throughput').textContent =
+                    formatMetricValue(network.throughput_mbps, 'Mbps');
+                document.getElementById('metric-utilization').textContent =
+                    formatMetricValue(network.avg_utilization_percent, '%');
             } catch (error) {
                 console.error('获取统计信息失败:', error);
             }
@@ -2900,6 +2933,11 @@ def get_web_ui_html():
             const bwVal = (edgeData.bw !== undefined) ? edgeData.bw
                 : ((edgeData.free_bandwith !== undefined) ? edgeData.free_bandwith : edgeData.free_bandwidth);
             const lossVal = (edgeData.loss !== undefined) ? edgeData.loss : edgeData.loss_rate;
+            const capacityVal = edgeData.capacity_mbps;
+            const throughputVal = edgeData.throughput_mbps;
+            const utilizationVal = edgeData.utilization_percent;
+            const dropRateVal = edgeData.drop_rate;
+            const errorRateVal = edgeData.error_rate;
 
             const fmtMetric = (v, unit) => {
                 if (v === undefined || v === null || v === '') return 'N/A';
@@ -2915,6 +2953,10 @@ def get_web_ui_html():
                     return (n * 1000).toFixed(3) + ' ms';
                 }
                 return String(v);
+            };
+            const fmtRatioPercent = (v) => {
+                const n = Number(v);
+                return Number.isFinite(n) ? (n * 100).toFixed(3) + ' %' : 'N/A';
             };
 
             let html = '';
@@ -2938,8 +2980,15 @@ def get_web_ui_html():
             html += '<h3 class="section-title">Link Metrics</h3>';
             html += '<div class="info-card">';
             html += createInfoRow('Delay', fmtDelay(delayVal));
-            html += createInfoRow('Bandwidth', fmtMetric(bwVal, 'Mbps'), true);
+            html += createInfoRow('Capacity', fmtMetric(capacityVal, 'Mbps'));
+            html += createInfoRow('Current Throughput', fmtMetric(throughputVal, 'Mbps'), true);
+            html += createInfoRow('Available Bandwidth', fmtMetric(bwVal, 'Mbps'));
+            html += createInfoRow('Utilization', fmtMetric(utilizationVal, '%'));
             html += createInfoRow('Packet Loss', fmtMetric(lossVal, '%'), false, false);
+            html += createInfoRow('Drop Rate', fmtRatioPercent(dropRateVal));
+            html += createInfoRow('Error Rate', fmtRatioPercent(errorRateVal), false, Number(errorRateVal) > 0);
+            html += createInfoRow('Port State', String(edgeData.port_state || 'UNKNOWN'));
+            html += createInfoRow('Bandwidth Source', String(edgeData.bandwidth_source || 'unknown'));
             html += createInfoRow('Edge Type', String(edgeData.edge_type || 'switch_link'));
             if (edgeData.source_domain || edgeData.target_domain) {
                 html += createInfoRow('Domain Pair', String(edgeData.source_domain || '-') + ' <-> ' + String(edgeData.target_domain || '-'));
@@ -3061,14 +3110,14 @@ def get_web_ui_html():
                 html += createInfoRow('DPID', node.id || 'N/A');
                 html += '<div class="divider"></div>';
                 // 交换机实时指标（如果有）
-                if (nodeData.throughput !== undefined) {
-                    html += createInfoRow('Throughput', (nodeData.throughput || 0) + ' Mbps', true);
+                if (nodeData.throughput_mbps !== undefined) {
+                    html += createInfoRow('Throughput', Number(nodeData.throughput_mbps || 0).toFixed(3) + ' Mbps', true);
                 }
-                if (nodeData.latency !== undefined) {
-                    html += createInfoRow('Latency', (nodeData.latency || 0) + ' ms');
+                if (nodeData.avg_utilization_percent !== undefined) {
+                    html += createInfoRow('Avg Port Utilization', Number(nodeData.avg_utilization_percent || 0).toFixed(3) + ' %');
                 }
-                if (nodeData.loss !== undefined) {
-                    html += createInfoRow('Packet Loss', (nodeData.loss || 0) + '%', false, true);
+                if (nodeData.error_port_count !== undefined) {
+                    html += createInfoRow('Error Ports', String(nodeData.error_port_count || 0), false, Number(nodeData.error_port_count) > 0);
                 }
                 html += createInfoRow('Connected Hosts', (connectionCounts.hosts || 0).toString());
             } else if (nodeType === 'host') {
@@ -3085,13 +3134,7 @@ def get_web_ui_html():
             // 流表部分（仅交换机）
             if (nodeType === 'switch') {
                 html += '<div class="sidebar-section">';
-                html += '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">';
                 html += '<h3 class="section-title">Flow Tables</h3>';
-                html += '<button class="btn-add-flow" onclick="showAddFlowModal()">';
-                html += '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>';
-                html += '添加规则';
-                html += '</button>';
-                html += '</div>';
                 html += '<div class="flow-table">';
                 
                 const flowTable = Array.isArray(nodeData.flow_table) ? nodeData.flow_table : null;
@@ -3118,7 +3161,7 @@ def get_web_ui_html():
                     html += '<line x1="12" y1="16" x2="12.01" y2="16"/>';
                     html += '</svg>';
                     html += '<p style="font-size: 14px; color: #64748b;">暂无流表规则</p>';
-                    html += '<p style="font-size: 12px; color: #475569; margin-top: 4px;">点击上方按钮添加第一条规则</p>';
+                    html += '<p style="font-size: 12px; color: #475569; margin-top: 4px;">当前没有流表规则</p>';
                     html += '</div>';
                 }
                 
@@ -3176,11 +3219,6 @@ def get_web_ui_html():
             html += '<div style="display: flex; align-items: center; gap: 8px;">';
             html += '<span class="flow-priority">Pri: ' + safePriority + '</span>';
             html += '<span class="flow-status"></span>';
-            html += '</div>';
-            html += '<div class="flow-delete" data-switch-id="' + safeSwitchId + '" data-flow-id="' + safeFlowId + '">';
-            html += '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">';
-            html += '<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>';
-            html += '</svg>';
             html += '</div>';
             html += '</div>';
             html += '<div class="flow-details">';

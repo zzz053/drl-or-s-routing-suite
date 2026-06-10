@@ -23,10 +23,13 @@ from common_config import (
     HOST_PORT_TASK_RANGES,
     TASK_POLICY_MAP,
     TASK_PRIORITY_MAP,
+    TASK_DRL_MAP,
     ROUTE_FLOW_IDLE_TIMEOUT,
     ROUTE_FLOW_HARD_TIMEOUT,
     FLOW_INSTALL_BARRIER_TIMEOUT,
     EXTERNAL_LINK_PORTS,
+    EXTERNAL_LINK_METRICS,
+    STATIC_HYBRID_LINKS,
     EXTERNAL_ARP_ALLOWED_PREFIXES,
     VIRTUAL_SWITCH_DPID_MAX,
 )
@@ -45,8 +48,13 @@ from external_host_guard import (
 from packetin_lldp import handle_lldp_packet_in
 from packetin_arp import handle_switch_packet_in, handle_host_arp_packet_in
 from packetin_ip import handle_host_ip_packet_in
+from network_metrics import (
+    DEFAULT_LINK_CAPACITY_MBPS,
+    calculate_port_runtime_metrics,
+    choose_capacity_mbps,
+)
 
-Initial_bandwidth = 800
+Initial_bandwidth = DEFAULT_LINK_CAPACITY_MBPS
 
 # 配置日志
 logging.basicConfig(
@@ -75,6 +83,8 @@ class TopoAwareness(app_manager.RyuApp):
         self.external_host_sources = set()  # {(mac, ip)} learned from configured physical/external ports
         self.topo_inter_link = {}  # {(src.dpid, dst.dpid): (src.port_no, timestamp, delay, bw, loss)}存储交换机之间的内部链路信息.包括端口、时间戳、延迟、带宽和丢包率。
         self.topo_access_link = {}  # 存储接入链路信息（域间交换机的链路）
+        self.static_hybrid_link_keys = set()
+        self.static_hybrid_link_metrics = {}
         # 永久链路口集合：一旦某端口曾确认连接过交换机，则永久视为链路口，不再允许学习主机
         self.permanent_link_ports = {}  # {dpid: set(port_no, ...)}
         # self.detection_access_link = {}  # 带有时间戳的外部链路信息，用于超时检测，超时检测后被赋值给真正的外部链路
@@ -94,6 +104,13 @@ class TopoAwareness(app_manager.RyuApp):
         self.port_stats = {}
         self.free_bandwidth = {}  # {dpid: {port_no: (free_bandwidth, usage), ...}, ...} (Mbit/s),每个交换机端口的带宽使用情况
         self.port_loss_stats = {}  # 新增的端口丢包统计字典
+        self.port_capacity_mbps = {}
+        self.port_capacity_source = {}
+        self.port_desc = {}
+        self.port_throughput_mbps = {}
+        self.port_utilization = {}
+        self.port_health = {}
+        self.port_runtime_metrics = {}
 
         ###########
         self.mac_to_port = {}
@@ -137,6 +154,7 @@ class TopoAwareness(app_manager.RyuApp):
         self._pending_path_packets = {}
 
         self._apply_configured_external_link_ports()
+        self._apply_static_hybrid_links()
         # 交换机真实流表快照（来自 OFPFlowStatsReply）
         self.switch_flow_stats = {}  # {dpid: [flow_entry, ...]}
         # 已下发路径会话：用于链路断开后的相关流表删除
@@ -184,6 +202,8 @@ class TopoAwareness(app_manager.RyuApp):
             parser = datapath.ofproto_parser
             req = parser.OFPPortStatsRequest(datapath, 0, ofproto.OFPP_ANY)  # 创建一个 OpenFlow 消息，用于请求特定交换机的所有端口统计信息
             datapath.send_msg(req)  # 将创建的统计请求消息发送到对应的交换机
+            desc_req = parser.OFPPortDescStatsRequest(datapath, 0)
+            datapath.send_msg(desc_req)
             flow_req = parser.OFPFlowStatsRequest(datapath)
             datapath.send_msg(flow_req)
             hub.sleep(0.5)
@@ -351,6 +371,9 @@ class TopoAwareness(app_manager.RyuApp):
             'fallback_reason': meta.get('fallback_reason'),
             'model_confidence': meta.get('model_confidence'),
             'drl_compute_time': meta.get('drl_compute_time'),
+            'drl_type': meta.get('drl_type'),
+            'drl_demand_kbps': meta.get('drl_demand_kbps'),
+            'drl_duration': meta.get('drl_duration'),
             'drl_shadow': meta.get('drl_shadow'),
             'session_key': session_key,
         }
@@ -422,6 +445,7 @@ class TopoAwareness(app_manager.RyuApp):
         src_switch_id = self.get_switch_id_by_ip(src_ip)
         dst_switch_id = self.get_switch_id_by_ip(dst_ip)
         src_port = self.get_switch_port_by_ip(src_ip)
+        drl_meta = self._get_drl_metadata_for_task(task_type)
 
         # 两端主机都在本控制器可见，优先走本地重算。
         if src_switch_id is not None and dst_switch_id is not None and src_port is not None:
@@ -445,6 +469,9 @@ class TopoAwareness(app_manager.RyuApp):
                     'l4_match': l4_fwd,
                     'switch_id': src_switch_id,
                     'in_port': src_port,
+                    'drl_type': drl_meta['drl_type'],
+                    'drl_demand_kbps': drl_meta['drl_demand_kbps'],
+                    'drl_duration': drl_meta['drl_duration'],
                 }, preferred_sid=preferred_sid)
             self.logger.info("链路故障后本地重路由完成: %s -> %s, path=%s", src_ip, dst_ip, path)
             return True
@@ -616,13 +643,75 @@ class TopoAwareness(app_manager.RyuApp):
         period = curr_time - pre_time
         return period
 
+    def _configured_port_capacity(self, dpid, port_no):
+        metric = self._configured_external_link_metric(dpid, port_no)
+        if metric:
+            return metric.get("bandwidth_mbps")
+        for link in STATIC_HYBRID_LINKS:
+            if int(link.get("src_dpid")) == int(dpid) and int(link.get("src_port")) == int(port_no):
+                return link.get("bandwidth_mbps")
+            if int(link.get("dst_dpid")) == int(dpid) and int(link.get("dst_port")) == int(port_no):
+                return link.get("bandwidth_mbps")
+        return None
+
+    def _record_port_capacity(self, dpid, port_no, curr_speed=0, max_speed=0):
+        capacity, source = choose_capacity_mbps(
+            curr_speed_kbps=curr_speed,
+            max_speed_kbps=max_speed,
+            configured_mbps=self._configured_port_capacity(dpid, port_no),
+        )
+        self.port_capacity_mbps[(dpid, port_no)] = capacity
+        self.port_capacity_source[(dpid, port_no)] = source
+        return capacity, source
+
+    def _port_capacity(self, dpid, port_no):
+        key = (dpid, port_no)
+        if key not in self.port_capacity_mbps:
+            self._record_port_capacity(dpid, port_no)
+        return self.port_capacity_mbps.get(key, Initial_bandwidth)
+
+    @staticmethod
+    def _decode_port_state(state):
+        if state & ofproto_v1_3.OFPPS_LINK_DOWN:
+            return "LINK_DOWN"
+        if state & ofproto_v1_3.OFPPS_BLOCKED:
+            return "BLOCKED"
+        if state & ofproto_v1_3.OFPPS_LIVE:
+            return "LIVE"
+        return "UNKNOWN"
+
     # Bandwidth graph:
     def _save_freebandwidth(self, dpid, port_no, speed):
-        capacity = Initial_bandwidth  # Kbp/s to Mbit/s
         speed = float(speed * 8) / (10 ** 6)  # byte/s to Mbit/s
+        capacity = self._port_capacity(dpid, port_no)
         curr_bw = max(capacity - speed, 0)
         self.free_bandwidth[dpid].setdefault(port_no, None)
         self.free_bandwidth[dpid][port_no] = (curr_bw, speed)  # Save as Mbit/s
+
+    def _runtime_metrics_for_port(self, dpid, port_no):
+        key = (dpid, port_no)
+        metrics = dict(self.port_runtime_metrics.get(key, {}))
+        metrics.setdefault("capacity_mbps", self._port_capacity(dpid, port_no))
+        metrics.setdefault("bandwidth_source", self.port_capacity_source.get(key, "default"))
+        metrics.setdefault("throughput_mbps", 0.0)
+        metrics.setdefault("rx_mbps", 0.0)
+        metrics.setdefault("tx_mbps", 0.0)
+        metrics.setdefault("utilization_percent", 0.0)
+        metrics.setdefault("drop_rate", 0.0)
+        metrics.setdefault("error_rate", 0.0)
+        metrics.setdefault("rx_errors", 0)
+        metrics.setdefault("tx_errors", 0)
+        metrics.setdefault("rx_dropped", 0)
+        metrics.setdefault("tx_dropped", 0)
+        metrics.setdefault("port_state", self.port_desc.get(key, {}).get("port_state", "UNKNOWN"))
+        return metrics
+
+    def _apply_runtime_metrics_to_graph(self, src_dpid, dst_dpid, src_port):
+        if not self.graph.has_edge(src_dpid, dst_dpid):
+            return
+        runtime = self._runtime_metrics_for_port(src_dpid, src_port)
+        for key, value in runtime.items():
+            self.graph[src_dpid][dst_dpid][key] = value
 
     def add_bandwidth_info(self, free_bandwidth):
         """
@@ -636,6 +725,8 @@ class TopoAwareness(app_manager.RyuApp):
                 src_free_bandwidth, _ = free_bandwidth[src_dpid][src_port]
                 self.topo_inter_link[(src_dpid, dst_dpid)][3] = src_free_bandwidth
                 self.graph[src_dpid][dst_dpid]['free_bandwith'] = src_free_bandwidth
+                self.graph[src_dpid][dst_dpid]['bw'] = src_free_bandwidth
+                self._apply_runtime_metrics_to_graph(src_dpid, dst_dpid, src_port)
             except:
                 pass
 
@@ -648,6 +739,8 @@ class TopoAwareness(app_manager.RyuApp):
                 src_free_bandwidth, _ = free_bandwidth[src_dpid][src_port]
                 self.topo_access_link[(src_dpid, dst_dpid)][3] = src_free_bandwidth
                 self.graph[src_dpid][dst_dpid]['free_bandwith'] = src_free_bandwidth
+                self.graph[src_dpid][dst_dpid]['bw'] = src_free_bandwidth
+                self._apply_runtime_metrics_to_graph(src_dpid, dst_dpid, src_port)
             except:
                 pass
     # 处理来自交换机的端口统计信息，计算端口的速度，并更新带宽使用情况。
@@ -682,7 +775,8 @@ class TopoAwareness(app_manager.RyuApp):
 
                 key = (dpid, port_no)
                 value = (stat.tx_packets, stat.rx_packets, stat.tx_bytes, stat.rx_bytes, 
-                        stat.rx_dropped, stat.tx_dropped, now_timestamp)
+                        stat.rx_dropped, stat.tx_dropped, now_timestamp,
+                        getattr(stat, 'tx_errors', 0), getattr(stat, 'rx_errors', 0))
 
                 # 保存端口统计数据
                 self._save_stats(self.port_stats, key, value, 5)
@@ -719,6 +813,47 @@ class TopoAwareness(app_manager.RyuApp):
                 # 计算带宽相关信息
                 port_stats = self.port_stats[key]
                 if len(port_stats) > 1:
+                    prev = port_stats[-2]
+                    curr = port_stats[-1]
+                    previous = {
+                        "tx_packets": prev[0],
+                        "rx_packets": prev[1],
+                        "tx_bytes": prev[2],
+                        "rx_bytes": prev[3],
+                        "rx_dropped": prev[4],
+                        "tx_dropped": prev[5],
+                        "timestamp": prev[6],
+                        "tx_errors": prev[7],
+                        "rx_errors": prev[8],
+                    }
+                    current = {
+                        "tx_packets": curr[0],
+                        "rx_packets": curr[1],
+                        "tx_bytes": curr[2],
+                        "rx_bytes": curr[3],
+                        "rx_dropped": curr[4],
+                        "tx_dropped": curr[5],
+                        "timestamp": curr[6],
+                        "tx_errors": curr[7],
+                        "rx_errors": curr[8],
+                    }
+                    runtime = calculate_port_runtime_metrics(
+                        previous,
+                        current,
+                        self._port_capacity(dpid, port_no),
+                    )
+                    runtime["capacity_mbps"] = self._port_capacity(dpid, port_no)
+                    runtime["bandwidth_source"] = self.port_capacity_source.get(key, "default")
+                    runtime["port_state"] = self.port_desc.get(key, {}).get("port_state", "UNKNOWN")
+                    self.port_runtime_metrics[key] = runtime
+                    self.port_throughput_mbps[key] = runtime["throughput_mbps"]
+                    self.port_utilization[key] = runtime["utilization_percent"]
+                    self.port_health[key] = {
+                        "drop_rate": runtime["drop_rate"],
+                        "error_rate": runtime["error_rate"],
+                        "port_state": runtime["port_state"],
+                    }
+
                     curr_stat = port_stats[-1][2]
                     # self.logger.info("Current Stat: %s", curr_stat)
                     prev_stat = port_stats[-2][2]
@@ -735,6 +870,33 @@ class TopoAwareness(app_manager.RyuApp):
 
 
                     self._save_freebandwidth(dpid, port_no, speed)
+
+    @set_ev_cls(ofp_event.EventOFPPortDescStatsReply, MAIN_DISPATCHER)
+    def _port_desc_stats_reply_handler(self, ev):
+        """Save OpenFlow port description and negotiated speed."""
+        dpid = ev.msg.datapath.id
+        for port in ev.msg.body:
+            port_no = port.port_no
+            if port_no == ofproto_v1_3.OFPP_LOCAL:
+                continue
+            name = getattr(port, 'name', '')
+            if isinstance(name, bytes):
+                name = name.decode('utf-8', 'replace')
+            state = int(getattr(port, 'state', 0) or 0)
+            capacity, source = self._record_port_capacity(
+                dpid,
+                port_no,
+                curr_speed=getattr(port, 'curr_speed', 0),
+                max_speed=getattr(port, 'max_speed', 0),
+            )
+            self.port_desc[(dpid, port_no)] = {
+                "name": str(name),
+                "port_state": self._decode_port_state(state),
+                "curr_speed": int(getattr(port, 'curr_speed', 0) or 0),
+                "max_speed": int(getattr(port, 'max_speed', 0) or 0),
+                "capacity_mbps": capacity,
+                "bandwidth_source": source,
+            }
 
     """
         收集网络时延信息
@@ -777,9 +939,15 @@ class TopoAwareness(app_manager.RyuApp):
         for link in link_to_port.keys():
             (src_dpid, dst_dpid) = link
             try:
-                delay = self._get_delay(src_dpid, dst_dpid)
-                self.topo_inter_link[(src_dpid, dst_dpid)][2] = delay
-                self.graph[src_dpid][dst_dpid]['delay'] = delay
+                link_state = self.topo_inter_link[(src_dpid, dst_dpid)]
+                if self._apply_static_hybrid_link_metric(src_dpid, dst_dpid, link_state):
+                    pass
+                elif self._configured_external_link_metric(src_dpid, link_state[0]):
+                    self._apply_configured_external_link_metric(src_dpid, dst_dpid, link_state)
+                else:
+                    delay = self._get_delay(src_dpid, dst_dpid)
+                    link_state[2] = delay
+                    self.graph[src_dpid][dst_dpid]['delay'] = delay
             except:
                 pass
 
@@ -790,9 +958,13 @@ class TopoAwareness(app_manager.RyuApp):
             # 其中local_dpid是本域交换机，remote_dpid是其他域交换机
             try:
                 # 调用_get_access_delay时，参数顺序是(本域交换机, 其他域交换机)
-                delay = self._get_access_delay(local_dpid, remote_dpid)
-                self.topo_access_link[(local_dpid, remote_dpid)][2] = delay
-                self.graph[local_dpid][remote_dpid]['delay'] = delay
+                link_state = self.topo_access_link[(local_dpid, remote_dpid)]
+                if self._configured_external_link_metric(local_dpid, link_state[0]):
+                    self._apply_configured_external_link_metric(local_dpid, remote_dpid, link_state)
+                else:
+                    delay = self._get_access_delay(local_dpid, remote_dpid)
+                    link_state[2] = delay
+                    self.graph[local_dpid][remote_dpid]['delay'] = delay
             except:
                 pass
 
@@ -1136,8 +1308,94 @@ class TopoAwareness(app_manager.RyuApp):
             for port_no in ports:
                 self._mark_permanent_link_port(configured_dpid, port_no)
 
+    def _apply_static_hybrid_links(self, dpid=None):
+        """Inject configured switch-to-switch links that cannot rely on LLDP."""
+        for link in STATIC_HYBRID_LINKS:
+            src_dpid = int(link["src_dpid"])
+            dst_dpid = int(link["dst_dpid"])
+            if dpid is not None and dpid not in (src_dpid, dst_dpid):
+                continue
+            self._upsert_static_hybrid_link(
+                src_dpid,
+                int(link["src_port"]),
+                dst_dpid,
+                link,
+            )
+            self._upsert_static_hybrid_link(
+                dst_dpid,
+                int(link["dst_port"]),
+                src_dpid,
+                link,
+            )
+
+    def _upsert_static_hybrid_link(self, src_dpid, src_port, dst_dpid, link):
+        self._mark_permanent_link_port(src_dpid, src_port)
+        if not hasattr(self, "static_hybrid_link_keys"):
+            self.static_hybrid_link_keys = set()
+        if not hasattr(self, "static_hybrid_link_metrics"):
+            self.static_hybrid_link_metrics = {}
+        key = (src_dpid, dst_dpid)
+        metric = {
+            "delay_seconds": float(link.get("delay_seconds", 0.0)),
+            "bandwidth_mbps": float(link.get("bandwidth_mbps", Initial_bandwidth)),
+            "loss_percent": float(link.get("loss_percent", 0.0)),
+            "source": str(link.get("source", "configured_static_link")),
+        }
+        self.static_hybrid_link_keys.add(key)
+        self.static_hybrid_link_metrics[key] = metric
+        self.topo_inter_link[key] = [
+            src_port,
+            0,
+            metric["delay_seconds"],
+            metric["bandwidth_mbps"],
+            metric["loss_percent"],
+        ]
+        self.graph.add_edge(src_dpid, dst_dpid)
+        self.graph[src_dpid][dst_dpid]["delay"] = metric["delay_seconds"]
+        self.graph[src_dpid][dst_dpid]["bw"] = metric["bandwidth_mbps"]
+        self.graph[src_dpid][dst_dpid]["loss"] = metric["loss_percent"]
+        self.graph[src_dpid][dst_dpid]["metric_source"] = metric["source"]
+        self.graph[src_dpid][dst_dpid]["static_hybrid_link"] = True
+        self._remove_access_link_pair(src_dpid, dst_dpid)
+
+    def _static_hybrid_link_metric(self, src_dpid, dst_dpid):
+        return getattr(self, "static_hybrid_link_metrics", {}).get((src_dpid, dst_dpid))
+
+    def _apply_static_hybrid_link_metric(self, src_dpid, dst_dpid, link_state):
+        metric = self._static_hybrid_link_metric(src_dpid, dst_dpid)
+        if not metric:
+            return False
+        link_state[2] = metric["delay_seconds"]
+        port_runtime = self.free_bandwidth.get(src_dpid, {}).get(link_state[0])
+        link_state[3] = port_runtime[0] if port_runtime else metric["bandwidth_mbps"]
+        link_state[4] = metric["loss_percent"]
+        if self.graph.has_edge(src_dpid, dst_dpid):
+            self.graph[src_dpid][dst_dpid]["delay"] = metric["delay_seconds"]
+            self.graph[src_dpid][dst_dpid]["bw"] = link_state[3]
+            self.graph[src_dpid][dst_dpid]["loss"] = metric["loss_percent"]
+            self.graph[src_dpid][dst_dpid]["metric_source"] = metric.get("source", "configured_static_link")
+            self.graph[src_dpid][dst_dpid]["static_hybrid_link"] = True
+        return True
+
     def is_configured_external_link_port(self, dpid, port):
         return port in EXTERNAL_LINK_PORTS.get(dpid, set())
+
+    def _configured_external_link_metric(self, dpid, port):
+        return EXTERNAL_LINK_METRICS.get((dpid, port))
+
+    def _apply_configured_external_link_metric(self, dpid, dst_dpid, link_state):
+        metric = self._configured_external_link_metric(dpid, link_state[0])
+        if not metric:
+            return
+        link_state[2] = metric["delay_seconds"]
+        port_runtime = self.free_bandwidth.get(dpid, {}).get(link_state[0])
+        link_state[3] = port_runtime[0] if port_runtime else metric["bandwidth_mbps"]
+        link_state[4] = metric["loss_percent"]
+        if self.graph.has_edge(dpid, dst_dpid):
+            self.graph[dpid][dst_dpid]["delay"] = metric["delay_seconds"]
+            self.graph[dpid][dst_dpid]["bw"] = link_state[3]
+            self.graph[dpid][dst_dpid]["loss"] = metric["loss_percent"]
+            self.graph[dpid][dst_dpid]["metric_source"] = metric.get("source", "configured")
 
     def remember_external_host_source(self, mac, ip):
         if not remember_external_host_source(self.external_host_sources, mac, ip):
@@ -1313,14 +1571,16 @@ class TopoAwareness(app_manager.RyuApp):
 
     def _get_task_type_by_host_ports(self, sport, dport):
         """根据 TCP/UDP 源/目的端口所在区间映射业务类型（先目的端口，再源端口）。"""
-        if sport is None or dport is None:
+        if sport is None and dport is None:
             return 'default'
-        for lo, hi, task in HOST_PORT_TASK_RANGES:
-            if lo <= dport <= hi:
-                return task
-        for lo, hi, task in HOST_PORT_TASK_RANGES:
-            if lo <= sport <= hi:
-                return task
+        if dport is not None:
+            for lo, hi, task in HOST_PORT_TASK_RANGES:
+                if lo <= dport <= hi:
+                    return task
+        if sport is not None:
+            for lo, hi, task in HOST_PORT_TASK_RANGES:
+                if lo <= sport <= hi:
+                    return task
         return 'default'
 
     def _ofp_match_ip_l4(self, parser, in_port, src_ip, dst_ip, l4_fwd):
@@ -1349,6 +1609,9 @@ class TopoAwareness(app_manager.RyuApp):
 
     def _get_flow_priority_for_task(self, task_type):
         return TASK_PRIORITY_MAP.get(task_type, TASK_PRIORITY_MAP['default'])
+
+    def _get_drl_metadata_for_task(self, task_type):
+        return TASK_DRL_MAP.get(task_type, TASK_DRL_MAP['default'])
     # 检查每个交换机的每个端口连接的主机IP地址，如果找到匹配的IP地址，则返回对应的交换机ID
     # def get_switch_id_by_ip(self, ip_address):
         # sw = self.host_to_sw_port.keys()
@@ -1607,6 +1870,7 @@ class TopoAwareness(app_manager.RyuApp):
         self.host_to_sw_port.setdefault(dpid, {})
         self.permanent_link_ports.setdefault(dpid, set())
         self._apply_configured_external_link_ports(dpid)
+        self._apply_static_hybrid_links(dpid)
         self.mac_to_port.setdefault(dpid, {})
         if dpid not in self.dpid_to_switch:
             self.dpid_to_switch[dpid] = sw.dp
@@ -1639,6 +1903,7 @@ class TopoAwareness(app_manager.RyuApp):
             self.host_to_sw_port.setdefault(dpid, {})
             self.permanent_link_ports.setdefault(dpid, set())
             self._apply_configured_external_link_ports(dpid)
+            self._apply_static_hybrid_links(dpid)
             self.mac_to_port.setdefault(dpid, {})
             self.dpid_to_switch_ip[dpid] = sw.dp.address
             self.dpid_to_switch[dpid] = sw.dp
@@ -1721,14 +1986,26 @@ class TopoAwareness(app_manager.RyuApp):
             self.topo_inter_link[(src_dpid, dst_dpid)] = [src_port, 0, 0, 0, 0]
             self._mark_permanent_link_port(src_dpid, src_port)
             self.graph.add_edge(src_dpid, dst_dpid)
+            self._apply_configured_external_link_metric(
+                src_dpid,
+                dst_dpid,
+                self.topo_inter_link[(src_dpid, dst_dpid)],
+            )
             self._remove_access_link_pair(src_dpid, dst_dpid)
 
     def delete_inter_link(self, link):
         src_dpid = link.src.dpid
         dst_dpid = link.dst.dpid
+        if (src_dpid, dst_dpid) in getattr(self, "static_hybrid_link_keys", set()):
+            self._apply_static_hybrid_links(src_dpid)
+            self.logger.debug("保留静态虚实链路，忽略链路删除事件: %s -> %s", src_dpid, dst_dpid)
+            return
         if (src_dpid, dst_dpid) in self.topo_inter_link:
             del self.topo_inter_link[(src_dpid, dst_dpid)]
-            self.graph.remove_edge(src_dpid, dst_dpid)
+            if self.graph.has_edge(src_dpid, dst_dpid):
+                self.graph.remove_edge(src_dpid, dst_dpid)
+            else:
+                self.logger.debug("忽略不存在的链路删除事件: %s -> %s", src_dpid, dst_dpid)
 
     def link_timeout_detection(self, access_link):  #  access_link，这是一个字典，通常用于存储链路信息，其中键是源和目标节点的元组，值是与链路相关的属性（例如时间戳）
         """
@@ -1963,23 +2240,51 @@ class TopoAwareness(app_manager.RyuApp):
                     link_info = []
                     # 域内链路
                     for link in self.topo_inter_link.keys():
+                        runtime = self._runtime_metrics_for_port(link[0], self.topo_inter_link[link][0])
                         link_info.append({
                             'src': link[0],
                             'dst': link[1],
                             'src_port': self.topo_inter_link[link][0],
                             'delay': self.topo_inter_link[link][2],
                             'bw': self.topo_inter_link[link][3],
-                            'loss': self.topo_inter_link[link][4]
+                            'loss': self.topo_inter_link[link][4],
+                            'capacity_mbps': runtime.get('capacity_mbps'),
+                            'throughput_mbps': runtime.get('throughput_mbps'),
+                            'rx_mbps': runtime.get('rx_mbps'),
+                            'tx_mbps': runtime.get('tx_mbps'),
+                            'utilization_percent': runtime.get('utilization_percent'),
+                            'bandwidth_source': runtime.get('bandwidth_source'),
+                            'port_state': runtime.get('port_state'),
+                            'drop_rate': runtime.get('drop_rate'),
+                            'error_rate': runtime.get('error_rate'),
+                            'rx_errors': runtime.get('rx_errors'),
+                            'tx_errors': runtime.get('tx_errors'),
+                            'rx_dropped': runtime.get('rx_dropped'),
+                            'tx_dropped': runtime.get('tx_dropped'),
                         })
                     # 域间链路
                     for link in self.topo_access_link.keys():
+                        runtime = self._runtime_metrics_for_port(link[0], self.topo_access_link[link][0])
                         link_info.append({
                             'src': link[0],
                             'dst': link[1],
                             'src_port': self.topo_access_link[link][0],
                             'delay': self.topo_access_link[link][2],
                             'bw': self.topo_access_link[link][3],
-                            'loss': self.topo_access_link[link][4]
+                            'loss': self.topo_access_link[link][4],
+                            'capacity_mbps': runtime.get('capacity_mbps'),
+                            'throughput_mbps': runtime.get('throughput_mbps'),
+                            'rx_mbps': runtime.get('rx_mbps'),
+                            'tx_mbps': runtime.get('tx_mbps'),
+                            'utilization_percent': runtime.get('utilization_percent'),
+                            'bandwidth_source': runtime.get('bandwidth_source'),
+                            'port_state': runtime.get('port_state'),
+                            'drop_rate': runtime.get('drop_rate'),
+                            'error_rate': runtime.get('error_rate'),
+                            'rx_errors': runtime.get('rx_errors'),
+                            'tx_errors': runtime.get('tx_errors'),
+                            'rx_dropped': runtime.get('rx_dropped'),
+                            'tx_dropped': runtime.get('tx_dropped'),
                         })
 
                     # 构建链路信息，
@@ -2021,6 +2326,9 @@ class TopoAwareness(app_manager.RyuApp):
                             'fallback_reason': session.get('fallback_reason'),
                             'model_confidence': session.get('model_confidence'),
                             'drl_compute_time': session.get('drl_compute_time'),
+                            'drl_type': session.get('drl_type'),
+                            'drl_demand_kbps': session.get('drl_demand_kbps'),
+                            'drl_duration': session.get('drl_duration'),
                             'drl_shadow': session.get('drl_shadow'),
                             'created_at': session.get('created_at', 0),
                             'updated_at': session.get('updated_at', session.get('created_at', 0)),
@@ -2173,6 +2481,9 @@ class TopoAwareness(app_manager.RyuApp):
                         'fallback_reason': msg.get('fallback_reason'),
                         'model_confidence': msg.get('model_confidence'),
                         'drl_compute_time': msg.get('drl_compute_time'),
+                        'drl_type': msg.get('drl_type'),
+                        'drl_demand_kbps': msg.get('drl_demand_kbps'),
+                        'drl_duration': msg.get('drl_duration'),
                         'drl_shadow': msg.get('drl_shadow'),
                     }, preferred_sid=msg.get('session_id'))
         elif msg.get('status') == 'error':
@@ -2453,6 +2764,7 @@ class TopoAwareness(app_manager.RyuApp):
     def _request_path(self, src_ip, dst_ip, dpid, in_port, msg, task_type='default',
                       route_policy='shortest_path', l4_fwd=None, session_id=None):
         """请求路径计算"""
+        drl_meta = self._get_drl_metadata_for_task(task_type)
         path_msg = {
             "type": "path_request",
             "src": src_ip,
@@ -2460,15 +2772,20 @@ class TopoAwareness(app_manager.RyuApp):
             "switch_id": dpid,
             "in_port": in_port,
             "task_type": task_type,
-            "route_policy": route_policy
+            "route_policy": route_policy,
+            "drl_type": drl_meta["drl_type"],
+            "drl_demand_kbps": drl_meta["drl_demand_kbps"],
+            "drl_duration": drl_meta["drl_duration"]
         }
         if l4_fwd:
             path_msg['l4_match'] = l4_fwd
         if session_id is not None:
             path_msg['session_id'] = int(session_id)
         self.logger.info(
-            "[PathRequest] send_to_root src=%s dst=%s switch=%s in_port=%s task=%s policy=%s session_id=%s",
-            src_ip, dst_ip, dpid, in_port, task_type, route_policy, session_id
+            "[PathRequest] send_to_root src=%s dst=%s switch=%s in_port=%s task=%s policy=%s drl_type=%s demand=%s duration=%s session_id=%s",
+            src_ip, dst_ip, dpid, in_port, task_type, route_policy,
+            drl_meta["drl_type"], drl_meta["drl_demand_kbps"], drl_meta["drl_duration"],
+            session_id
         )
         self._send_to_server(path_msg)
         # self.logger.info(f"已发送路径请求: {src_ip} -> {dst_ip}")

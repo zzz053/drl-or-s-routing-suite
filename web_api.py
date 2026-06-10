@@ -15,6 +15,9 @@ from datetime import datetime
 
 from flask import jsonify, make_response, request
 
+from tools.acceptance_web_status import build_acceptance_status
+from network_metrics import aggregate_network_metrics
+
 
 logger = logging.getLogger("server_agent")
 
@@ -103,6 +106,19 @@ def _prepare_node_data_for_graph(node_data, include_flows=False):
 def register_web_api_routes(app, get_server_agent):
     """注册 Flask API 路由。"""
 
+    @app.before_request
+    def reject_web_writes_in_read_only_mode():
+        if request.method in {'GET', 'HEAD', 'OPTIONS'}:
+            return None
+        server_agent = get_server_agent()
+        if server_agent is not None and getattr(server_agent, 'web_mode', 'read_only') == 'development':
+            return None
+        return jsonify({
+            'status': 'error',
+            'error_code': 'web_write_disabled',
+            'message': 'Web write operations are disabled in read-only mode',
+        }), 403
+
     @app.route('/')
     def index():
         server_agent = get_server_agent()
@@ -125,6 +141,13 @@ def register_web_api_routes(app, get_server_agent):
             'graph_nodes': len(server_agent.G.nodes()),
             'graph_edges': len(server_agent.G.edges())
         })
+
+    @app.route('/api/acceptance/status', methods=['GET'])
+    def get_acceptance_status():
+        server_agent = get_server_agent()
+        if server_agent is None:
+            return jsonify({'status': 'unknown', 'issues': ['Server not initialized']}), 503
+        return jsonify(build_acceptance_status(server_agent))
 
     @app.route('/api/topo', methods=['GET'])
     def get_topo():
@@ -264,6 +287,9 @@ def register_web_api_routes(app, get_server_agent):
                     'fallback_reason': raw.get('fallback_reason'),
                     'model_confidence': raw.get('model_confidence'),
                     'drl_compute_time': raw.get('drl_compute_time'),
+                    'drl_type': raw.get('drl_type'),
+                    'drl_demand_kbps': raw.get('drl_demand_kbps'),
+                    'drl_duration': raw.get('drl_duration'),
                     'drl_shadow': raw.get('drl_shadow'),
                     'created_at': raw.get('created_at', 0),
                     'updated_at': raw.get('updated_at', raw.get('created_at', 0)),
@@ -309,6 +335,9 @@ def register_web_api_routes(app, get_server_agent):
         if server_agent is None:
             return jsonify({'error': 'Server not initialized'}), 503
 
+        network_metrics = aggregate_network_metrics(
+            [dict(edge_data or {}) for _, _, edge_data in server_agent.G.edges(data=True)]
+        )
         stats = {
             'controllers': len(server_agent.clients),
             'switches': sum(len(switches) for switches in server_agent.controller_to_switches.values()),
@@ -323,6 +352,7 @@ def register_web_api_routes(app, get_server_agent):
                 'links': sum(len(links) for links in server_agent.topo.values()),
                 'link_down': len(getattr(server_agent, 'link_down_set', {})) // 2,
             },
+            'network': network_metrics,
             'drl': {
                 'enabled': True,
                 'path_service_host': getattr(server_agent, 'path_service_host', '127.0.0.1'),

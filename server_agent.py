@@ -13,6 +13,7 @@ import os
 import networkx as nx
 import traceback
 from flask import Flask
+from werkzeug.serving import make_server
 try:
     from flask_cors import CORS
 except ImportError:
@@ -22,6 +23,7 @@ from common_config import (
     CONTROLLER_IP,
     CONTROLLER_PORT,
     WEB_PORT,
+    WEB_MODE,
     PATH_SERVICE_HOST,
     PATH_SERVICE_PORT,
     DRL_ROUTE_MODE,
@@ -61,9 +63,6 @@ logger = logging.getLogger("server_agent")
 # 创建 Flask 应用
 app = Flask(__name__)
 
-# 启用 CORS，允许所有来源
-CORS(app, resources={r"/api/*": {"origins": "*"}})
-
 # 全局server_agent实例引用（在main()中初始化）
 server_agent = None
 
@@ -100,10 +99,13 @@ class ServerAgent:
         self.ip = ip
         self.port = port
         self.route_mode = route_mode or DRL_ROUTE_MODE
+        self.web_mode = WEB_MODE
         self.sock = None
+        self.web_http_server = None
         self.is_running = False
         self.clients = {}  # {client_addr: (socket, thread)}
         self.client_last_heartbeat = {}  # {client_addr: last_heartbeat_timestamp}
+        self.graph_lock = threading.RLock()
         self.client_lock = threading.Lock()  # 用于保护clients字典的线程锁
         
         # 心跳检测配置
@@ -180,6 +182,13 @@ class ServerAgent:
     def _get_switch_flow_table(self, switch_id):
         sid = self._normalize_switch_id(switch_id)
         return list(self.switch_flow_tables.get(sid, []))
+
+    def _upsert_graph_switch_node(self, switch_id):
+        self.G.add_node(
+            switch_id,
+            node_type='switch',
+            flow_table=self._get_switch_flow_table(switch_id)
+        )
 
     def add_manual_flow(self, payload):
         switch_id = self._normalize_switch_id(payload.get('switch_id'))
@@ -291,46 +300,40 @@ class ServerAgent:
         )
 
     def start_web_server(self):
-        """在单独的线程中启动 Flask 服务器"""
-        def run_flask():
-            try:
-                # 禁用Flask的默认日志（避免过多输出）
-                import logging
-                log = logging.getLogger('werkzeug')
-                log.setLevel(logging.WARNING)
-                
-                logger.info(f"Flask线程开始运行，准备绑定端口 {WEB_PORT}")
-                print(f"Flask线程开始运行，准备绑定端口 {WEB_PORT}")
-                
-                app.run(host='0.0.0.0', port=WEB_PORT, debug=False, use_reloader=False, threaded=True)
-            except Exception as e:
-                logger.error(f"Flask Web服务器启动失败: {e}")
-                logger.error(traceback.format_exc())
-                print(f"Flask Web服务器启动失败: {e}")
-                print(traceback.format_exc())
-        
-        web_thread = threading.Thread(target=run_flask, daemon=True)
+        """Start the Flask server after binding its port synchronously."""
+        werkzeug_log = logging.getLogger('werkzeug')
+        werkzeug_log.setLevel(logging.WARNING)
+
+        logger.info("Flask server preparing to bind port %s", WEB_PORT)
+        try:
+            self.web_http_server = make_server(
+                '0.0.0.0', WEB_PORT, app, threaded=True)
+        except (OSError, SystemExit) as exc:
+            raise RuntimeError(
+                f"Web port {WEB_PORT} is already in use; "
+                "stop the running suite or set WEB_PORT to another free port."
+            ) from exc
+
+        web_thread = threading.Thread(
+            target=self.web_http_server.serve_forever, daemon=True)
         web_thread.start()
-        
-        # 等待一下让Flask有时间启动
-        time.sleep(1)
-        
-        logger.info(f"Web 服务器线程已启动（端口 {WEB_PORT}）")
-        logger.info(f"访问 http://localhost:{WEB_PORT} 查看拓扑可视化")
-        print(f"Web 服务器线程已启动（端口 {WEB_PORT}）")
-        print(f"访问 http://localhost:{WEB_PORT} 查看拓扑可视化")
+
+        logger.info("Web server started on port %s", WEB_PORT)
+        logger.info("Open http://localhost:%s to view topology", WEB_PORT)
+        print(f"Web server started on port {WEB_PORT}")
+        print(f"Open http://localhost:{WEB_PORT} to view topology")
 
     def start(self):
         """启动服务器"""
         try:
-            # 启动 Web 服务器
-            self.start_web_server()
-            
             # 原有的 TCP 服务器启动代码
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self.sock.bind((self.ip, self.port))
             self.sock.listen(5)
+
+            # Only start Web after the server socket is successfully reserved.
+            self.start_web_server()
             self.is_running = True
             
             logger.info(f"服务器已启动，监听地址: {self.ip}:{self.port}")
@@ -661,6 +664,14 @@ class ServerAgent:
     
     def update_graph(self):
         """更新网络图"""
+        graph_lock = getattr(self, 'graph_lock', None)
+        if graph_lock is not None:
+            with graph_lock:
+                return self._update_graph_locked()
+        return self._update_graph_locked()
+
+    def _update_graph_locked(self):
+        """Rebuild the topology graph while the caller holds graph_lock."""
         # 清空图
         self.G.clear()
         
@@ -743,23 +754,9 @@ class ServerAgent:
                 src = link.get('src')
                 dst = link.get('dst')
                 if src and dst:
-                    # 先确保节点存在并设置正确的node_type（在添加边之前）
-                    # 这样可以避免NetworkX自动创建没有属性的节点
-                    if src not in self.G:
-                        self.G.add_node(src, node_type='switch', flow_table=self._get_switch_flow_table(src))
-                    else:
-                        # 如果节点已存在但没有node_type，则更新它
-                        if 'node_type' not in self.G.nodes[src] or self.G.nodes[src].get('node_type') != 'switch':
-                            self.G.nodes[src]['node_type'] = 'switch'
-                        self.G.nodes[src]['flow_table'] = self._get_switch_flow_table(src)
-                    
-                    if dst not in self.G:
-                        self.G.add_node(dst, node_type='switch', flow_table=self._get_switch_flow_table(dst))
-                    else:
-                        # 如果节点已存在但没有node_type，则更新它
-                        if 'node_type' not in self.G.nodes[dst] or self.G.nodes[dst].get('node_type') != 'switch':
-                            self.G.nodes[dst]['node_type'] = 'switch'
-                        self.G.nodes[dst]['flow_table'] = self._get_switch_flow_table(dst)
+                    # Upsert avoids check-then-get races while topology and flow stats converge.
+                    self._upsert_graph_switch_node(src)
+                    self._upsert_graph_switch_node(dst)
                     
                     # 添加边，可以设置权重等属性
                     delay = link.get('delay', 1)
@@ -781,10 +778,37 @@ class ServerAgent:
                     if not math.isfinite(weight) or weight < 0:
                         weight = 1
                     
+                    runtime_fields = {}
+                    for key in (
+                        'capacity_mbps', 'throughput_mbps', 'rx_mbps', 'tx_mbps',
+                        'utilization_percent', 'bandwidth_source', 'port_state',
+                        'drop_rate', 'error_rate', 'rx_errors', 'tx_errors',
+                        'rx_dropped', 'tx_dropped',
+                    ):
+                        if key in link:
+                            runtime_fields[key] = link.get(key)
+                    existing_edge = self.G.get_edge_data(src, dst, {}) if self.G.has_edge(src, dst) else {}
+                    incoming_source = str(runtime_fields.get('bandwidth_source', '') or '')
+                    existing_source = str(existing_edge.get('bandwidth_source', '') or '')
+                    if (
+                        existing_source.startswith('openflow_')
+                        and not incoming_source.startswith('openflow_')
+                    ):
+                        bw = existing_edge.get('bw', bw)
+                        for key in (
+                            'capacity_mbps', 'throughput_mbps', 'rx_mbps', 'tx_mbps',
+                            'utilization_percent', 'bandwidth_source', 'port_state',
+                            'drop_rate', 'error_rate', 'rx_errors', 'tx_errors',
+                            'rx_dropped', 'tx_dropped',
+                        ):
+                            if key in existing_edge:
+                                runtime_fields[key] = existing_edge.get(key)
+
                     self.G.add_edge(src, dst, weight=weight, controller=controller_key,
                                    delay=delay, bw=bw, loss=loss,
                                    src_port=link.get('src_port'),
-                                   edge_type='switch_link')
+                                   edge_type='switch_link',
+                                   **runtime_fields)
                     
                     # 添加交换机到控制器的连接（如果交换机属于该控制器）
                     if controller_id in self.G:
@@ -821,17 +845,7 @@ class ServerAgent:
                                   edge_type='controller_connection', weight=1)
             
             for switch_id in switches:
-                if switch_id not in self.G:
-                    self.G.add_node(
-                        switch_id,
-                        node_type='switch',
-                        flow_table=self._get_switch_flow_table(switch_id)
-                    )
-                else:
-                    # 如果节点已存在但没有node_type或node_type不正确，则更新它
-                    if 'node_type' not in self.G.nodes[switch_id] or self.G.nodes[switch_id].get('node_type') != 'switch':
-                        self.G.nodes[switch_id]['node_type'] = 'switch'
-                    self.G.nodes[switch_id]['flow_table'] = self._get_switch_flow_table(switch_id)
+                self._upsert_graph_switch_node(switch_id)
                 # 连接交换机到其控制器
                 if not self.G.has_edge(controller_id, switch_id):
                     self.G.add_edge(controller_id, switch_id, 
@@ -855,13 +869,7 @@ class ServerAgent:
                 ip = host.get('ip')
                 
                 if dpid and ip:
-                    # 确保交换机节点存在并设置正确的node_type
-                    if dpid not in self.G:
-                        self.G.add_node(dpid, node_type='switch')
-                    else:
-                        # 如果节点已存在但没有node_type或node_type不正确，则更新它
-                        if 'node_type' not in self.G.nodes[dpid] or self.G.nodes[dpid].get('node_type') != 'switch':
-                            self.G.nodes[dpid]['node_type'] = 'switch'
+                    self._upsert_graph_switch_node(dpid)
                     
                     # 添加主机节点并设置正确的node_type
                     if ip not in self.G:
@@ -1004,6 +1012,9 @@ class ServerAgent:
             'confidence': response.get('confidence'),
             'compute_time': response.get('compute_time'),
             'candidate_count': response.get('candidate_count'),
+            'drl_type': response.get('drl_type'),
+            'drl_demand_kbps': response.get('drl_demand_kbps'),
+            'drl_duration': response.get('drl_duration'),
         }
 
     def _choose_final_path_response(self, message, drl_response, fallback_response, route_mode):
@@ -1024,6 +1035,9 @@ class ServerAgent:
                     ),
                     'model_confidence': drl_response.get('model_confidence') if drl_response else None,
                     'drl_compute_time': drl_response.get('drl_compute_time') if drl_response else None,
+                    'drl_type': drl_response.get('drl_type') if drl_response else None,
+                    'drl_demand_kbps': drl_response.get('drl_demand_kbps') if drl_response else None,
+                    'drl_duration': drl_response.get('drl_duration') if drl_response else None,
                 }
             return fallback_response
 
@@ -1037,6 +1051,32 @@ class ServerAgent:
             }
 
         return fallback_response
+
+    def _build_path_service_request(self, message, src_ip, dst_ip, src_dpid, dst_dpid):
+        route_policy = message.get('route_policy', 'shortest_path')
+        candidates = build_k_shortest_candidates(
+            self.G,
+            src_ip,
+            dst_ip,
+            k=DRL_K_CANDIDATES,
+            link_down_set=self.link_down_set,
+            route_policy=route_policy,
+        )
+        return {
+            'type': 'path_request',
+            'src_node': src_dpid,
+            'dst_node': dst_dpid,
+            'topo_edges': build_topo_edges_for_path_service(
+                self.G, self.link_down_set, route_policy),
+            'candidates': candidates,
+            'route_mode': message.get('route_mode', self.route_mode),
+            'route_policy': route_policy,
+            'task_type': message.get('task_type', 'default'),
+            'drl_type': int(message.get('drl_type', 0)),
+            'drl_demand_kbps': int(message.get('drl_demand_kbps', 100)),
+            'drl_duration': int(message.get('drl_duration', 100)),
+            'request_id': "%d-%d-%d" % (src_dpid, dst_dpid, int(time.time() * 1000)),
+        }
 
     def _request_path_from_drl(self, message):
         src_ip = message.get('src')
@@ -1061,31 +1101,13 @@ class ServerAgent:
                     src_ip, src_dpid, dst_ip, dst_dpid
                 )
                 return None
-            candidates = build_k_shortest_candidates(
-                self.G,
-                src_ip,
-                dst_ip,
-                k=DRL_K_CANDIDATES,
-                link_down_set=self.link_down_set,
-                route_policy=route_policy,
-            )
-
-            request = {
-                'type': 'path_request',
-                'src_node': src_dpid,
-                'dst_node': dst_dpid,
-                'topo_edges': build_topo_edges_for_path_service(
-                    self.G, self.link_down_set, route_policy),
-                'candidates': candidates,
-                'route_mode': message.get('route_mode', self.route_mode),
-                'route_policy': route_policy,
-                'task_type': message.get('task_type', 'default'),
-                'request_id': "%d-%d-%d" % (src_dpid, dst_dpid, int(time.time() * 1000)),
-            }
+            request = self._build_path_service_request(message, src_ip, dst_ip, src_dpid, dst_dpid)
             logger.info(
-                "[DRL] request_path route_mode=%s src=%s(%s) dst=%s(%s) task=%s policy=%s candidates=%d",
+                "[DRL] request_path route_mode=%s src=%s(%s) dst=%s(%s) task=%s policy=%s drl_type=%s demand=%s duration=%s candidates=%d",
                 request['route_mode'], src_ip, src_dpid, dst_ip, dst_dpid,
-                request['task_type'], route_policy, len(candidates)
+                request['task_type'], route_policy, request['drl_type'],
+                request['drl_demand_kbps'], request['drl_duration'],
+                len(request.get('candidates') or [])
             )
             with self.path_service_lock:
                 if self.path_service_sock is None:
@@ -1157,6 +1179,9 @@ class ServerAgent:
                 'fallback_reason': drl_decision.get('fallback_reason'),
                 'model_confidence': drl_decision.get('confidence'),
                 'drl_compute_time': drl_decision.get('compute_time'),
+                'drl_type': drl_decision.get('drl_type', message.get('drl_type')),
+                'drl_demand_kbps': drl_decision.get('drl_demand_kbps', message.get('drl_demand_kbps')),
+                'drl_duration': drl_decision.get('drl_duration', message.get('drl_duration')),
                 'candidate_count': drl_decision.get('candidate_count'),
                 'hop_ports': build_hop_ports(self.G, drl_path),
             }
@@ -1168,6 +1193,19 @@ class ServerAgent:
         fallback_response = None
         if route_mode in {'spf', 'shadow'} or drl_response is None:
             fallback_response = handle_path_request_with_policy(self.G, message, self.link_down_set)
+            if (
+                fallback_response.get('status') != 'ok'
+                and fallback_response.get('message', '').startswith('no path')
+                and self.link_down_set
+            ):
+                retry_response = handle_path_request_with_policy(self.G, message, {})
+                if retry_response.get('status') == 'ok':
+                    retry_response['fallback_reason'] = 'stale_link_down_ignored'
+                    logger.warning(
+                        "[Path] retrying with stale link_down ignored: src=%s dst=%s link_down_count=%d",
+                        src, dst, len(self.link_down_set)
+                    )
+                    fallback_response = retry_response
 
         response = self._choose_final_path_response(
             message, drl_response, fallback_response, route_mode)
@@ -1193,6 +1231,14 @@ class ServerAgent:
         self.clients.clear()
         
         # 关闭服务器套接字
+        if self.web_http_server:
+            try:
+                self.web_http_server.shutdown()
+                self.web_http_server.server_close()
+            except Exception:
+                pass
+            self.web_http_server = None
+
         if self.sock:
             try:
                 self.sock.close()

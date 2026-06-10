@@ -55,6 +55,7 @@ def _resolve_service_path(path):
 NetEnv = None
 Request = None
 Policy = None
+NET_ENV_IMPORT_ERROR = None
 
 if torch is not None and Data is not None:
     # 尝试导入并打补丁
@@ -208,11 +209,28 @@ class DRLPathService(object):
         self.port = port
         self.topo_name = topo_name
         self.model_path = _resolve_service_path(model_path)
+        self.env = None
+        self.num_agent = 0
+        self.num_node = 0
+        self.node_state_dim = 0
+        self.num_type = 0
+        self.agent_to_node = []
+        self.edge_indexs = []
+        self.adj_masks = []
+        self.device = None
+        self.actor_critic = None
+        self._last_model_action_used = False
+        self.drl_runtime_available = not (
+            torch is None or Data is None or NetEnv is None or Policy is None
+        )
+        self.drl_runtime_error = NET_ENV_IMPORT_ERROR
 
         print("[初始化] 拓扑: %s, 端口: %d" % (topo_name, port))
 
-        if torch is None or Data is None or NetEnv is None or Policy is None:
-            raise RuntimeError("DRL runtime dependencies unavailable: %s" % NET_ENV_IMPORT_ERROR)
+        if not self.drl_runtime_available:
+            print("[DRL] runtime unavailable, starting Dijkstra-only mode: %s" % self.drl_runtime_error)
+            print("[初始化] 完成：Dijkstra-only, topo_edges required for path computation")
+            return
 
         # 固定随机种子
         random.seed(1)
@@ -254,8 +272,6 @@ class DRLPathService(object):
         self.adj_masks = adj_masks
 
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        self.actor_critic = None
-        self._last_model_action_used = False
 
         # 加载 DRL 模型
         if self.model_path:
@@ -395,15 +411,20 @@ class DRLPathService(object):
 
         return path
 
-    def compute_path_with_drl(self, src_node, dst_node):
+    def compute_path_with_drl(self, src_node, dst_node, rtype=0, demand=100, duration=50):
         """使用 DRL 模型计算路径（0-based 索引）"""
         self._last_model_action_used = False
+        request, obses = self._reset_env_with_request(
+            src_node,
+            dst_node,
+            rtype=rtype,
+            demand=demand,
+            duration=duration,
+        )
         if self.actor_critic is None:
             return self.env.calcSHR(src_node, dst_node)
 
         try:
-            request, obses = self._reset_env_with_request(src_node, dst_node, rtype=0, demand=100, duration=50)
-
             path = [src_node]
             curr_path = [0] * self.num_node
             curr_path[src_node] = 1
@@ -497,7 +518,7 @@ class DRLPathService(object):
     # ============================================================
     #  对外接口：统一路径计算入口
     # ============================================================
-    def compute_path(self, src_node, dst_node, topo_edges=None):
+    def compute_path(self, src_node, dst_node, topo_edges=None, drl_type=0, drl_demand_kbps=100, drl_duration=50):
         """
         对外接口：统一路径计算
         
@@ -526,7 +547,13 @@ class DRLPathService(object):
                 dst_0based = dst_node - 1
 
                 if self.actor_critic is not None:
-                    path_0based = self.compute_path_with_drl(src_0based, dst_0based)
+                    path_0based = self.compute_path_with_drl(
+                        src_0based,
+                        dst_0based,
+                        rtype=drl_type,
+                        demand=drl_demand_kbps,
+                        duration=drl_duration,
+                    )
                     decision_source = "drl_model" if self._last_model_action_used else "drl_shr"
                     fallback_reason = None if self._last_model_action_used else "model_action_not_used"
                     model_used = self._last_model_action_used
@@ -549,8 +576,13 @@ class DRLPathService(object):
             path = _dijkstra_on_edges(topo_edges, src_node, dst_node)
             if path:
                 print("[路径] Dijkstra 计算: %d -> %d = %s" % (src_node, dst_node, path))
+                fallback_reason = (
+                    "drl_runtime_unavailable"
+                    if not self.drl_runtime_available
+                    else "out_of_drl_range_or_drl_failed"
+                )
                 return _decision("dijkstra", path, model_used=False,
-                                 fallback_reason="out_of_drl_range_or_drl_failed")
+                                 fallback_reason=fallback_reason)
             else:
                 print("[路径] Dijkstra 无路径: %d -> %d" % (src_node, dst_node))
         else:
@@ -581,8 +613,11 @@ class DRLPathService(object):
         s.listen(10)
         print("[服务] 已启动，监听端口 %d" % self.port)
         print("[服务] 等待控制器的路径计算请求...")
-        print("[服务] DRL 节点范围: 1 ~ %d (0-based: 0 ~ %d)" % (self.num_node, self.num_node - 1))
-        print("[服务] 超出范围的节点将使用 Dijkstra 回退（需控制器传入 topo_edges）")
+        if self.drl_runtime_available:
+            print("[服务] DRL 节点范围: 1 ~ %d (0-based: 0 ~ %d)" % (self.num_node, self.num_node - 1))
+            print("[服务] 超出范围的节点将使用 Dijkstra 回退（需控制器传入 topo_edges）")
+        else:
+            print("[服务] Dijkstra-only mode, all requests require controller topo_edges")
 
         def handle_client(conn, addr):
             """处理单个客户端连接（长连接，支持多个请求）"""
@@ -611,6 +646,9 @@ class DRLPathService(object):
                             topo_edges = request.get("topo_edges", None)
                             candidates = request.get("candidates") or []
                             route_mode = request.get("route_mode", "unknown")
+                            drl_type = int(request.get("drl_type", 0))
+                            drl_demand_kbps = int(request.get("drl_demand_kbps", 100))
+                            drl_duration = int(request.get("drl_duration", 100))
 
                             print("[请求] %d -> %d (ID: %s, topo_edges: %s)"
                                   % (src_node, dst_node, request_id,
@@ -620,8 +658,18 @@ class DRLPathService(object):
                                      request.get("task_type", "default"),
                                      request.get("route_policy", "shortest_path")))
 
+                            print("[DRL_SERVICE] task=%s drl_type=%s demand=%s duration=%s"
+                                  % (request.get("task_type", "default"),
+                                     drl_type, drl_demand_kbps, drl_duration))
                             start_time = time.time()
-                            decision = self.compute_path(src_node, dst_node, topo_edges)
+                            decision = self.compute_path(
+                                src_node,
+                                dst_node,
+                                topo_edges,
+                                drl_type=drl_type,
+                                drl_demand_kbps=drl_demand_kbps,
+                                drl_duration=drl_duration,
+                            )
                             elapsed = time.time() - start_time
                             path = decision.get("path") if isinstance(decision, dict) else decision
 
@@ -636,6 +684,9 @@ class DRLPathService(object):
                                 "fallback_reason": decision.get("fallback_reason"),
                                 "confidence": decision.get("confidence"),
                                 "candidate_count": len(candidates),
+                                "drl_type": drl_type,
+                                "drl_demand_kbps": drl_demand_kbps,
+                                "drl_duration": drl_duration,
                             }
                             if not path:
                                 response["error"] = "no path"
@@ -708,7 +759,7 @@ class DRLPathService(object):
                 traceback.print_exc()
 
 
-if __name__ == "__main__":
+def main(argv=None):
     parser = argparse.ArgumentParser(description="DRL 路径计算服务 v2")
     parser.add_argument("--topo", default="Military", help="拓扑名称")
     parser.add_argument("--port", type=int, default=8889, help="监听端口")
@@ -717,7 +768,7 @@ if __name__ == "__main__":
         default=None,
         help="DRL 模型路径。相对路径按 drl-or-s 目录解析，默认使用 ./model/Military_mininet",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     print("=" * 60)
     print("DRL 路径计算服务 v2")
@@ -728,3 +779,8 @@ if __name__ == "__main__":
         service.run()
     except KeyboardInterrupt:
         print("\n[服务] 已停止")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -14,6 +14,16 @@ def test_web_state_store_module_exists_and_versions_snapshots():
     assert "get_graph_snapshot" in text
 
 
+def test_web_state_store_reads_networkx_graph_under_server_graph_lock():
+    text = (ROOT / "web_state_store.py").read_text(encoding="utf-8")
+    body = text[text.index("def _build_graph_payload"):text.index("def _json_safe_value")]
+
+    assert "graph_lock = getattr(self.server_agent, 'graph_lock', None)" in body
+    assert "with graph_lock:" in body
+    assert "return self._build_graph_payload_locked" in body
+    assert "def _build_graph_payload_locked" in text
+
+
 def test_web_api_serves_cached_graph_versions():
     text = (ROOT / "web_api.py").read_text(encoding="utf-8")
 
@@ -198,6 +208,16 @@ def test_route_session_panel_formats_switch_path_labels():
     assert "function formatRouteSessionPath" in text
     assert "formatSwitchLabel" in text[text.index("function formatRouteSessionPath"):text.index("function sanitizeHtml")]
     assert "const pathText = formatRouteSessionPath(item)" in panel_body
+
+
+def test_route_session_panel_shows_drl_service_metadata():
+    text = (ROOT / "web_ui_html.py").read_text(encoding="utf-8")
+    panel_body = text[text.index("function updateRouteSessionsPanel"):text.index("function applyRouteSessionHighlight")]
+
+    assert "item.drl_type" in panel_body
+    assert "item.drl_demand_kbps" in panel_body
+    assert "rtype=" in panel_body
+    assert "Kbps" in panel_body
 
 
 def test_topology_has_auto_arrange_button():

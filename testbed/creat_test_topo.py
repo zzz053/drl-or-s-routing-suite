@@ -14,8 +14,8 @@ from mininet.log import setLogLevel
 from hybrid_external_interface import add_hardware_interface, restore_network_config
 
 
-EXTERNAL_SWITCH = 's1'
-EXTERNAL_PORT = 20
+EXTERNAL_SWITCH = os.environ.get("EXTERNAL_SWITCH", "s1")
+EXTERNAL_PORT = int(os.environ.get("EXTERNAL_PORT", "20"))
 HYBRID_GATEWAY_IP = os.environ.get("HYBRID_GATEWAY_IP", "10.0.0.254")
 HYBRID_REAL_ROUTES = os.environ.get("HYBRID_REAL_ROUTES", "192.168.103.0/24")
 
@@ -87,7 +87,7 @@ def staggered_pingall(net, interval=0.3, bidirectional=False, count=1, timeout=1
     return {'total': total, 'success': success, 'failed': failed}
 
 
-def create_topology(external_intf=None):
+def create_topology(external_intf=None, hold=False):
     net = Mininet(controller=None, switch=OVSSwitch)
     external_state = None
 
@@ -248,9 +248,14 @@ def create_topology(external_intf=None):
         print("请确认真实交换机 OpenFlow 控制通道连接到 c1 端口 6654")
 
     try:
-        print("=== 网络已启动，进入 CLI ===")
-        print("可在 CLI 执行：py net.staggered_pingall(interval=0.3, bidirectional=False)")
-        CLI(net)
+        if hold:
+            print("=== 网络已启动，验收 hold 模式保持运行 ===")
+            while True:
+                time.sleep(3600)
+        else:
+            print("=== 网络已启动，进入 CLI ===")
+            print("可在 CLI 执行：py net.staggered_pingall(interval=0.3, bidirectional=False)")
+            CLI(net)
     finally:
         if external_state:
             print("=== 恢复宿主机物理网卡配置 ===")
@@ -260,4 +265,5 @@ def create_topology(external_intf=None):
 
 if __name__ == '__main__':
     setLogLevel('info')
-    create_topology(sys.argv[1] if len(sys.argv) > 1 else None)
+    args = [arg for arg in sys.argv[1:] if arg != "--hold"]
+    create_topology(args[0] if args else None, hold="--hold" in sys.argv[1:])
